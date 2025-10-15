@@ -10,14 +10,29 @@
                     a name String
                     an email String
                     a role Enum{coach, athlete}
-                    an accountPassword String
                     weeklyMileage: Number | null //athletes have mileage while coaches do not
                     gender: Enum{female, male}
+                    google {sub: string, email: string, emailVerified: Boolean, name:string} | null
+                    primaryAuth: string
+                    lastLoginAt: Date
 
+                
             actions:
-                register(email: String, name: String, password: String, role: Enum, gender: Enum): (user: User)
-                    requires: no user exists with that email
-                    effects: creates a new User model with email = email, name = name, role = role, and accountPassword = password, unique id is matched to the users id, gende= gender
+                loginWithGoogleIdToken(idToken: string): userID: ID, needsName: boolean, needsRole: boolean
+                    requires: valid google idToken 
+                    effects: generates a new/returning user and asserts whether or not they need a role or name
+                
+                setName(userId: ID, name: String)
+                    requires: user exists with that userID
+                    effects: user.name = name
+
+                setRole(userId: ID, role: Enum{'athlete', 'coach;})
+                    requires: user exists with that userID
+                    effects: user.role = role
+
+                setGender(userId: ID, gender: Enum{'male'|'female'})
+                    requires: user exists with that userID
+                    effects: user.gender = gender
 
                 setWeeklyMileage(user_id: ID, weeklyMileage: Number)
                     requires: User exists with that user_id and has role = athlete
@@ -27,15 +42,11 @@
                   requires: User exists and user.role == Athlete
                   effects: returns the users weeklyMileage
 
-                getAthleteByGender(gender: Enum): User[]
+                getAthletesByGender(gender: Enum): User[]
                   requires: there are athletes and athletes with that gender
                   effects: returns the athletes with that gender
 
-## Changes from Assignment 2:
-
-1. Added an "id" for the user state for help with uniqueness
-2. Added "gender" to the user state for a later sync where the coach may prompt to get certain athletes by gender
-3. set/got user information based on the id rather than the email since the application will be able to prompt and grab the id easier than the users email
-4. Added the getWeeklyMileage action for a future sync with the TrainingRecords concept for when the coach logs users mileage
-5. Added the getAtheleteByGender action so that the coach can filter athlete information when logging or browsing
+                getUserRole(userId: ID): Enum {'athlete', 'coach'}
+                    requires: users exists with that userId
+                    effects: returns the role of the user
 

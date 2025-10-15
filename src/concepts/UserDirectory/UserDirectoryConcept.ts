@@ -1,14 +1,11 @@
 import { Collection, Db } from "npm:mongodb";
-import { Empty, ID } from "@utils/types.ts";
+import { Empty, ID} from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
+import { OAuth2Client } from "google-auth-library";
 
 const PREFIX = "UserDirectory" + ".";
 
-type UserID = ID;
-/**
- * @concept UserDirectory
- * @purpose Register and manage users of the system with unique emails and roles.
- */
+export type UserID = ID;
 
 export enum Role {
     Coach = "coach",
@@ -20,14 +17,31 @@ export enum Gender {
   Male = "male"
 }
 
-interface User {
-    _id: UserID;
-    name: string;
-    email: string;
-    role: Role;
-    accountPassword: string;
-    weeklyMileage: number | null;
-    gender: Gender
+export type GoogleProfile = {
+  sub: string;
+  email: string;
+  emailVerified: boolean;
+  name?: string;
+  picture?: string;
+};
+
+export interface User {
+  _id: UserID;
+  email: string;        
+  name?: string | null;        
+  role?: Role | null;         
+  weeklyMileage?: number | null;
+  gender?: Gender | null;
+
+  google?: {
+    sub: string;                       // Google stable ID
+    email: string;                     // from Google
+    emailVerified: boolean;            // from ID token
+    name?: string;
+  } | null;
+
+  primaryAuth?: "google";
+  lastLoginAt?: Date;
 }
 
 /**
@@ -36,124 +50,276 @@ interface User {
  * @principle After a user registers with a role, they can be referenced by other concepts.
  */
 export default class UserDirectoryConcept {
-    private users: Collection<User>;
+    users: Collection<User>;
+    private oauth?: OAuth2Client;
+    private googleClientId?: string;
     
-    constructor(private readonly db: Db) {
-    this.users = this.db.collection(PREFIX + "users");
-    // Ensure that the 'email' field is unique to fulfill the 'register' action's requirement.
-    this.users.createIndex({ email: 1 }, { unique: true }).catch((err) =>
-      console.error(
-        `Error creating unique index for UserDirectory.users.email: ${err}`,
-      )
-    );
-  }
+    constructor(private readonly db: Db, opts?: { oauthClient?: OAuth2Client; googleClientId?: string }) {
+      this.users = this.db.collection<User>(PREFIX + "users");
 
-  /**
-   * @action register
-   *
-   * @param {object} args - The arguments for the register action.
-   * @param {string} args.email - The unique email address for the new user.
-   * @param {string} args.name - The user's full name.
-   * @param {string} args.password - The user's account password.
-   * @param {Role} args.role - The role of the user (coach or athlete).
-   * @param {Gender} args.gender - The gender of the user
-   *
-   * @returns {Promise<{ user: User } | { error: string }>} - Returns the ID of the new user on success, or an error message if a user with that email already exists.
-   *
-   * @requires no user exists with that email
-   * @effects creates a new User model with email = email, name = name, role = role, and accountPassword = password
-   */
-  async register(
-    {email, name, password, role, gender}: {
-      email: string;
-      name: string;
-      password: string;
-      role: Role,
-      gender: Gender
-    }
-  ) : Promise<{ user: UserID } | { error: string }> {
-    // Check precondition: no user exists with that email
-    const existingUser = await this.users.findOne({ email });
-    if (existingUser) {
-      return { error: "A user with that email already exists." };
+      void this.users.createIndex({ email: 1 }, { unique: true });
+      void this.users.createIndex(
+        { "google.sub": 1 },
+        { unique: true, partialFilterExpression: { "google.sub": { $exists: true } } },
+      );
+
+      // Google verification wiring
+      this.oauth = opts?.oauthClient ?? (opts?.googleClientId ? new OAuth2Client(opts.googleClientId) : undefined);
+      this.googleClientId = opts?.googleClientId;
     }
 
-    const weeklyMileage = role === Role.Athlete ? 0 : null;
+    /**
+     * Normalizes emails to lowercase + remove white space to prevent duplicates
+     * @param email (string) valid google email
+     * @returns the normalized email
+     * 
+     * ex. Alex@Gmail.com -> alex@gmail.com
+     */
+    private normalizeEmail(email: string): string {
+      return (email || "").trim().toLowerCase();
+    }
 
-    const newUser: User = {
-      _id: freshID() as UserID,
-      name,
-      email,
-      role,
-      accountPassword: password,
-      weeklyMileage,
-      gender
-    };
-
-    try {
-      const result = await this.users.insertOne(newUser);
-      if (result.acknowledged) {
-        return { user: newUser._id };
-      } else {
-        // This case indicates a deeper database issue, not a precondition failure
-        return { error: "Failed to register user due to an unknown database error." };
+    /**
+     * Verifies the Google ID token inside the concept
+     * 
+     * @requires valid google idToken 
+     * @effects generates a new/returning user and asserts whether or not they need a role or name
+     * 
+     * @param idToken (string) google idToken
+     * @returns 
+     *    @userID the new/returning user's id association in the mongo db
+     *    @needsName boolean value of whether the user requires a name to be set
+     *    @neesRole boolean value of whether the user requires a role to be set
+    */
+    async loginWithGoogleIdToken(idToken: string,): Promise<{ userId: UserID; needsName: boolean; needsRole: boolean } | { error: string }> {
+      if (!idToken) return { error: "Missing idToken." };
+      if (!this.oauth || !this.googleClientId) {
+        return { error: "Google verification is not configured (oauth clientId missing)." };
       }
-    } catch (dbError) {
-      // Catch potential errors during insertion (e.g., if unique index was violated concurrently)
-      console.error("Database error during user registration:", dbError);
-      return { error: "Failed to register user due to a database operation error." };
+
+      // 1) Verify ID token with Google
+      const ticket = await this.oauth.verifyIdToken({
+        idToken,
+        audience: this.googleClientId,
+      });
+      const payload = ticket.getPayload();
+      if (!payload) return { error: "Invalid Google token." };
+
+      // 2) Build the profile expected by the concept
+      const profile: GoogleProfile = {
+        sub: payload.sub!,
+        email: this.normalizeEmail(payload.email || ""),
+        emailVerified: Boolean(payload.email_verified),
+        name: payload.name,
+      };
+
+      // 3) Delegate to the existing upsert flow
+      return this.loginWithGoogle(profile);
     }
-  }
 
-/**
-   * @action setWeeklyMileage
-   *
-   * @param {object} args - The arguments for the setWeeklyMileage action.
-   * @param {string} args.user_id - The id of the user whose mileage is to be set.
-   * @param {number} args.weeklyMileage - The weekly mileage to set for the user.
-   *
-   * @returns {Promise<Empty | { error: string }>} - Returns an empty object on success, or an error message if the user is not found or is not an athlete.
-   *
-   * @requires User exists with that email and has role = athlete
-   * @effects user.weeklyMileage = weeklyMileage
-*/
+    /**
+     * Helper function called withing loginWithGoogleIdToken to generate the users profile
+     * 
+     * @param profile (GoogleProfile) users google profile
+     * @returns 
+     *    @userID the new/returning user's id association in the mongo db
+     *    @needsName boolean value of whether the user requires a name to be set
+     *    @neesRole boolean value of whether the user requires a role to be set
+     */
+    async loginWithGoogle(profile: GoogleProfile): Promise<{ userId: UserID; needsName: boolean; needsRole: boolean } | { error: string }> {
+      if (!profile?.sub) return { error: "Missing Google subject (sub)." };
+      if (!profile?.email) return { error: "Missing Google email." };
+      if (profile.emailVerified !== true) return { error: "Google email must be verified." };
 
-async setWeeklyMileage({ user_id, weeklyMileage }: {user_id: UserID; weeklyMileage: number }): Promise<Empty | { error: string }> {
-  const user = await this.users.findOne({ _id: user_id as UserID });
-  if (!user) {
-    return { error: "User not found." };
-  }
-  if (user.role !== Role.Athlete) {
-    return { error: "Only athletes can have weekly mileage set." };
-  }
+      const now = new Date();
+      const normalizedEmail = this.normalizeEmail(profile.email);
 
-  try {
-    const result = await this.users.updateOne(
-      {_id:user_id},
-      { $set: { weeklyMileage } }
-    );
+      // 1) Try by google.sub 
+      let user = await this.users.findOne({ "google.sub": profile.sub });
 
-    if (result.acknowledged && result.modifiedCount === 1) {
-      return {};
-    } else if (result.acknowledged && result.matchedCount === 0) {
-      return {};
-    } else {
-      return { error: "Failed to update weekly mileage due to an unknown database error." };
+      if (!user) {
+        // 2) Try by email (in case user existed from import/manual creation)
+        user = await this.users.findOne({ email: normalizedEmail });
+        if (user) {
+          // Attach/link Google identity to existing user
+          const update = {
+            $set: {
+              email: normalizedEmail,
+              google: {
+                sub: profile.sub,
+                email: normalizedEmail,
+                emailVerified: true,
+                ...(profile.name ? { name: profile.name } : {}),
+                ...(profile.picture ? { picture: profile.picture } : {}),
+              },
+              primaryAuth: "google" as const,
+              lastLoginAt: now,
+            },
+          };
+
+          await this.users.updateOne({ _id: user._id }, update);
+          user = { ...user, ...update.$set } as User;
+        } else {
+          // 3) Create new user document
+          const newUser: User = {
+            _id: freshID() as UserID,
+            email: normalizedEmail,
+            name: profile.name ?? null,
+            role: null,
+            weeklyMileage: null,
+            gender: null,
+            google: {
+              sub: profile.sub,
+              email: normalizedEmail,
+              emailVerified: true,
+              ...(profile.name ? { name: profile.name } : {}),
+              ...(profile.picture ? { picture: profile.picture } : {}),
+            },
+            primaryAuth: "google",
+            lastLoginAt: now,
+          };
+
+          await this.users.insertOne(newUser);
+          user = newUser;
+        }
+      } else {
+        // Keep google.sub link; update email if it changed; bump lastLoginAt
+        const setDoc: Partial<User> = { lastLoginAt: now };
+        if (user.email !== normalizedEmail) setDoc.email = normalizedEmail;
+
+        if (setDoc.email || !user.lastLoginAt) {
+          await this.users.updateOne({ _id: user._id }, { $set: setDoc });
+          user = { ...user, ...setDoc };
+        } else {
+          // still bump lastLoginAt even if email unchanged
+          await this.users.updateOne({ _id: user._id }, { $set: { lastLoginAt: now } });
+          user.lastLoginAt = now;
+        }
+      }
+
+      const needsName = !(user.name && user.name.trim().length > 0);
+      const needsRole = !user.role;
+
+      return { userId: user._id, needsName, needsRole };
     }
-  } catch (dbError) {
-      console.error("Database error during weekly mileage update:", dbError);
-      return { error: "Failed to update weekly mileage due to a database operation error." };
-  }
-  }
+
+  
+    /**
+     * Sets the users name to the new name
+     * 
+     * @requires user exists with that userID
+     * @effects user.name = name
+     * 
+     * @param userId (userID) a userID associated with a current user
+     * @param name (string) the new name the user wants
+    */
+    async setName(userId: UserID, name: string): Promise<Empty | { error: string }> {
+      const userName = (name ?? "").trim();
+      if (userName.length === 0) return { error: "Name cannot be empty." };
+
+      const res = await this.users.updateOne(
+        { _id: userId },
+        { $set: { name: userName } }, // <-- write to 'name' (not 'userName')
+      );
+
+      if (res.matchedCount === 0) return { error: "User not found." };
+      return {};
+    }
+
+    /**
+     * makes the user either an athlete or a coach
+     * 
+     * @requires user exists with that userID
+     * @effects user.role = role
+     * 
+     * @param userId (UserID) a userID associated with a current user
+     * @param role (Role) {athlete | coach} 
+     */
+    async setRole(userId: UserID, role: Role ): Promise<Empty | { error: string }> {
+      if (role !== "athlete" && role !== "coach") {
+        return { error: "Invalid role." };
+      }
+
+      const res = await this.users.updateOne(
+        { _id: userId },
+        { $set: { role } },
+      );
+
+      if (res.matchedCount === 0) return { error: "User not found." };
+      return {};
+    }
+
+    /**
+     * makes the user either an male or female
+     * 
+     * @requires user exists with that userID
+     * @effects user.gender = gender
+     * 
+     * @param userId (UserID) a userID associated with a current user
+     * @param gender (Role) {male | female} 
+     */
+    async setGender(userId: UserID, gender: Gender): Promise<Empty | {error: string}> {
+      const res = await this.users.updateOne(
+        { _id: userId },
+        { $set: { gender } },
+      );
+
+      if (res.matchedCount === 0) return { error: "User not found." };
+      return {};
+    }
+    
+    /**
+     * sets the weeklyMileage of an ATHLETE 
+     * 
+     * @requires User exists with that user_id 
+     * @requires user.role = athlete
+     * @effects user.weeklyMileage = weeklyMileage
+     * 
+     * @param userId (UserID) a userID associated with a current user that is an athlete
+     * @param weeklyMileage (number) The weekly mileage to set for the user.
+     * 
+     */
+    async setWeeklyMileage(user_id: UserID, weeklyMileage: number ): Promise<Empty | { error: string }> {
+      const user = await this.users.findOne({ _id: user_id as UserID });
+
+      if (!user) {
+        return { error: "User not found." };
+      }
+
+      if (user.role !== Role.Athlete) {
+        return { error: "Only athletes can have weekly mileage set." };
+      }
+
+      try {
+        const result = await this.users.updateOne({_id:user_id}, { $set: { weeklyMileage } });
+
+        if (result.acknowledged && result.modifiedCount === 1) {
+          return {};
+        
+        } else if (result.acknowledged && result.matchedCount === 0) {
+          return {};
+
+        } else {
+          return { error: "Failed to update weekly mileage due to an unknown database error." };
+        }
+
+      } catch (dbError) {
+          console.error("Database error during weekly mileage update:", dbError);
+          return { error: "Failed to update weekly mileage due to a database operation error." };
+      }
+    }
 
   /**
-   * @query getAthleteMileage
-   * Retrieves the weekly mileage for an athlete by their email.
-   * @param {object} args - The query arguments.
-   * @param {string} args.user_id - The email of the athlete.
-   * @returns {Promise<{ weeklyMileage: number | null } | { error: string }>} The mileage or an error.
+   * Gets the weekly mileage of the athlete
+   * 
+   * @requires User exists with that user_id 
+   * @requires user.role = athlete
+   * @effects returns the users weeklyMileage
+   * 
+   * @param userId (UserID) a userID associated with a current user that is an athlete
+   * @returns the weekly mileage of the associated user
    */
-  async getAthleteMileage({user_id}: {user_id: UserID}): Promise<{ weeklyMileage: number | null } | { error: string }> {
+  async getAthleteMileage(user_id: UserID): Promise<{ weeklyMileage: number | null } | { error: string }> {
     const user = await this.users.findOne({ _id: user_id as UserID });
     
     if (!user) {
@@ -164,17 +330,19 @@ async setWeeklyMileage({ user_id, weeklyMileage }: {user_id: UserID; weeklyMilea
       return { error: "Only athletes have weekly mileage." };
     } 
     
-    return {weeklyMileage: user.weeklyMileage};
+    return { weeklyMileage: user.weeklyMileage ?? null };
   }
 
   /**
-   * @query getAthletesByGender
-   * Retrieves a list of athletes filtered by gender
-   * @param {object} args - The query arguments.
-   * @param {Gender} args.gender - The gender to filter athletes by.      
-   * @returns {Promise<{ athletes: User[] } | { error: string }>} The list of athletes or an error.
+   * Gets all of the athletes with that associated gender
+   * 
+   * @requires there are athletes and athletes with that gender
+   * @effects returns the athletes with that gender
+   *
+   * @paran gender (Gender) {'male' | 'female'} of the athletes you want to get
+   * @returns a list of users that have that associated gender
    */
-  async getAthletesByGender({gender}: {gender: Gender}): Promise<{ athletes: User[] } | { error: string }> {
+  async getAthletesByGender(gender: Gender): Promise<{ athletes: User[] } | { error: string }> {
     try {
       const athletes = await this.users.find({ role : Role.Athlete, gender: gender }).toArray();
       return { athletes };
@@ -183,6 +351,30 @@ async setWeeklyMileage({ user_id, weeklyMileage }: {user_id: UserID; weeklyMilea
       console.error("Database error during fetching athletes by gender:", dbError);
       return { error: "Failed to fetch athletes due to a database operation error." };
     }
+  }
+
+  /**
+   * Gets the role of the user
+   * 
+   * @requires user with userId exists
+   * @effects returns the user's role or null if it has not been set yet
+   * 
+   * @param userId a valid userId
+   * @returns the role of the user or null if it has not yet been set
+   */
+  async getUserRole(userId: UserID): Promise<Role | null | {error: string}> {
+    const user = await this.users.findOne({ _id: userId as UserID });
+
+    if (!user) {
+      return {error: `user with the id ${userId} does not exist.`}
+    }
+
+    const role = user.role;
+    if (role === undefined) {
+      return null;
+    } 
+
+    return role;
   }
    
 }

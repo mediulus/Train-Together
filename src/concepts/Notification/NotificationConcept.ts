@@ -1,6 +1,8 @@
 import { Collection, Db } from "npm:mongodb";
 import { Empty, ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
+import { google } from "googleapis";
+import type { OAuth2Client } from "google-auth-library";
 
 const PREFIX = "Notifications" + ".";
 
