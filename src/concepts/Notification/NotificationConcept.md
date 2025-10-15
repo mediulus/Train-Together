@@ -7,25 +7,31 @@
         state:
             a set of Notifications with:
                 recipients {Users}
-                importantEvents {Event}
-                a message String
+                events {Event} //these are going to be in a list format in the email
+                a messageEmail String //the message that is going to be sent
                 a scheduledAt DateTime
-                a repetition Enum{Weekly, Monthly, Daily, NonRepeating}
-                a status Enum{queued, sent}
 
         actions:
-            create(recipients: {User}, event?: Event, message: String, scheduledAt: DateTime, repetition: Enum)
-                requires: recipients exist and scheduledAt ≥ now
-                effects: creates new Notification with status = queued
+            create(sender: user_id, recipients: {User_id's}, events: Event_id[], additionalMessage: String, scheduledAt: DateTime)
+                requires: 
+                    - sender is a coach
+                    - sender exists
+                    - recipients exist 
+                    - recipients are on the team
+                    - scheduledAt ≥ now, event exists
+                effects: creates new Notification with the recipients, scheduled at the schedule time, makes the events into a message in list format giving the date/time, location, description, and/or link and additionally appends the additional message at the bottom of the events lists. 
             
-            addEvent(event:Event, notification: Notification)
-                requires: event exists,  notification exists
+            addEvent(editor: user_id, event:Event_id, notification: Notification_id)
+                requires: 
+                    - editor exists
+                    - editor is a coach
+                    - event exists
+                    - notification exists
                 effects: adds event to the notification and edits the message to have the event
 
-            send(notification: Notification)
-                requires: the notification’s status = queued and the current time is on or after the notification’s scheduled time
-                effects: sets the notification’s status to sent. If the repetition is not NonRepeating, creates a new notification scheduled at the next time according to the repetition rule, with status queued
-
-## Changes from Assignment 2
-1. Added an id attribute for easy access 
-2. Added the action "addRecipient" in case there need to be certain people to recieve a given notification
+            send(sender: user_id, notification: Notification_id)
+                requires: 
+                    - sender exists
+                    - sender is a coach
+                    - notification exists
+                effects: emails the message to the gmails of the recipients from the coaches email

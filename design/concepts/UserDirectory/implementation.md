@@ -1,8 +1,8 @@
-[@concept-design-overview](../../../background/concept-design-overview.md)
+[@concept-design-overview](../../background/concept-design-overview.md)
 
-[@concept-specifications](../../../background/concept-specifications.md)
+[@concept-specifications](../../background/concept-specifications.md)
 
-[@implementing-concepts](../../../background/implementing-concepts.md)
+[@implementing-concepts](../../background/implementing-concepts.md)
 
 
 # prompt: UserDirectory this is my UserDirectory Concept. Help me with the ts implementation. 

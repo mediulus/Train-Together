@@ -22,6 +22,9 @@
                     requires: valid google idToken 
                     effects: generates a new/returning user and asserts whether or not they need a role or name
                 
+                getUser(userId: ID): user: User
+                    requires: User exists
+                    effects: returns thte user
                 setName(userId: ID, name: String)
                     requires: user exists with that userID
                     effects: user.name = name

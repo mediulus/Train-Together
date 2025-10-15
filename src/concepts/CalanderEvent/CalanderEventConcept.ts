@@ -1,8 +1,11 @@
 import { Collection, Db } from "npm:mongodb";
 import { Empty, ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
+import UserDirectoryConcept, {
+  Role,
+} from "../UserDirectory/UserDirectoryConcept.ts";
 
-const PREFIX = 'CalnderEvent' + "."
+const PREFIX = "CalnderEvent" + ".";
 
 type EventID = ID;
 type User = ID;
@@ -10,7 +13,7 @@ type User = ID;
 /**
  * @interface Event
  */
-interface Event {
+export interface Event {
   _id: EventID;
   startTime: Date;
   endTime: Date;
@@ -20,52 +23,70 @@ interface Event {
   link?: string;
 }
 
-
-
 /**
  * @concept CalendarEvent
  * @purpose Post and update team events (practices, meets, deadlines).
  * @principle When a coach posts or updates an event, all team athletes can view it.
- *
- * This concept manages a collection of calendar events, allowing their creation,
- * deletion, modification, and duplication. It ensures the integrity of event
- * scheduling (e.g., start time before end time) and provides basic query capabilities.
- *
  */
 export default class CalanderEventConcept {
   private events: Collection<Event>;
+  private userDirectory: UserDirectoryConcept;
 
-  constructor(private readonly db: Db) {
+  constructor(private readonly db: Db, userDirectory?: UserDirectoryConcept) {
+    this.userDirectory = userDirectory ?? new UserDirectoryConcept(db);
     this.events = this.db.collection<Event>(PREFIX + "events");
   }
 
   /**
-   * @action createEvent
+   * @requires event exists
+   * @effects returns the event
    *
-   * @param {Object} args - The arguments for creating an event.
-   * @param {UserIdentifier} args.creator - The identifier of the user creating the event.
-   * @param {Date} args.startTime - The start time of the event.
-   * @param {Date} args.endTime - The end time of the event.
-   * @param {string} args.location - The physical location of the event.
-   * @param {string} args.title - The title of the event.
-   * @param {string} [args.description] - An optional detailed description of the event.
-   * @param {string} [args.link] - An optional URL link related to the event.
+   * @param eventId the id of the event you want
+   * @returns the event you queried
+   */
+  async getEvent(eventId: EventID): Promise<Event | { error: string }> {
+    const event = await this.events.findOne({ _id: eventId });
+
+    if (!event) return { error: `Event with ID '${eventId}' does not exist.` };
+    return event;
+  }
+
+  /**
+   * creates a new calander event for the teams calander
    *
-   * @returns {Promise<{event: EventID} | {error: string}>} Returns the ID of the newly created event on success, or an error message.
+   * @requires creator is a coach
+   * @requires creator exists
+   * @requires startTime < endTime
    *
-   * @requires startTime < endTime.
-   *           (External: user with name = creator exists and has role = coach)
-   * @effects Generates a new Event with the provided details and stores it.
+   * @effects generates and returns a new calander event with the corresponding attributes
+   *
+   * @param creator The identifier of the user creating the event.
+   * @param startTime The start time of the event.
+   * @param endTime The end time of the event.
+   * @param location The physical location of the event.
+   * @param title The title of the event.
+   * @param description An optional detailed description of the event.
+   * @param link An optional URL link related to the event.
+   *
+   * @returns Returns the ID of the newly created event on success, or an error message.
    */
 
   async createEvent(
-    {startTime, endTime, location, title, description, link}:
-    {creator: User, startTime: Date, endTime: Date,
-      location: string, title: string, description? : string,
-      link?: string
+    creator: User,
+    startTime: Date,
+    endTime: Date,
+    location: string,
+    title: string,
+    description?: string,
+    link?: string,
+  ): Promise<{ event: EventID } | { error: string }> {
+    //verify user and role
+    const userRole = await this.userDirectory.getUserRole(creator);
+    if (userRole !== Role.Coach) {
+      return { error: `User with id ${creator} cannot create an event` };
     }
-  ) : Promise<{ event: EventID } | { error: string }> {
-    
+
+    //verify timing constraint
     if (startTime.getTime() >= endTime.getTime()) {
       return { error: "Event start time must be before end time." };
     }
@@ -87,29 +108,32 @@ export default class CalanderEventConcept {
       console.error("Error creating event:", e);
       return { error: "Failed to create event due to a database error." };
     }
-
   }
 
   /**
-   * @action deleteEvent
+   * deletes the event based on the event id
    *
-   * @param {Object} args - The arguments for deleting an event.
-   * @param {UserIdentifier} args.deleter - The identifier of the user deleting the event.
-   * @param {EventID} args.event - The ID of the event to delete.
+   * @requires deleter exists
+   * @requires deleter is a coach
+   * @requires event exists
    *
-   * @returns {Promise<Empty | {error: string}>} Returns an empty object on success, or an error message.
+   * @effects deletes the event with the given id
    *
-   * @requires The specified event must exist.
-   *           (External: user exists with name = deleter and role = coach)
-   * @effects Deletes the event corresponding to the given ID from the state.
+   * @param deleter The identifier of the user deleting the event.
+   * @param event The ID of the event to delete.
+   *
+   * @returns an empty object on success, or an error message.
    */
-  async deleteEvent({
-    deleter, // As per spec, 'deleter' is a string. Not used for internal checks.
-    event,
-  }: {
-    deleter: User;
-    event: EventID;
-  }): Promise<Empty | { error: string }> {
+  async deleteEvent(
+    deleter: User,
+    event: EventID,
+  ): Promise<Empty | { error: string }> {
+    // verifies deleter
+    const userRole = await this.userDirectory.getUserRole(deleter);
+    if (userRole !== Role.Coach) {
+      return { error: `User with id ${deleter} cannot create an event` };
+    }
+
     // Requires: event exists
     try {
       const result = await this.events.deleteOne({ _id: event });
@@ -125,56 +149,121 @@ export default class CalanderEventConcept {
   }
 
   /**
-   * @action editEvent
+   * Edits a part(s) of the event
    *
+   * @requires all updates are an attribute of event
+   * @required editor exists
+   * @requires editor is a coach
+   * @requires if changing start or end time that they are still start < end
+   *
+   * @effects edits the event
    * @param {Object} args - The arguments for editing an event.
    * @param {UserIdentifier} args.editor - The identifier of the user editing the event.
    * @param {EventID} args.event - The ID of the event to edit.
    * @param {Partial<Omit<EventDocument, "_id">>} args.updates - An object containing fields to update and their new values.
    *
-   * @returns {Promise<Empty | {error: string}>} Returns an empty object on success, or an error message.
-   *
-   * @requires The specified event must exist.
-   *           If `startTime` or `endTime` are updated, `startTime < endTime` must still hold.
-   *           (External: user exists with name = editor and role = coach)
-   * @effects Updates the specified fields of the event with their new values.
+   * @returns an empty object on success, or an error message.
    */
-  async editEvent({
-    editor, // As per spec, 'editor' is a string. Not used for internal checks.
-    event,
-    updates,
-  }: {
-    editor: User;
-    event: EventID;
-    updates: Partial<Omit<Event, "_id">>; // Allow partial updates, explicitly disallow changing _id
-  }): Promise<Empty | { error: string }> {
-    // Pre-check for existence and validate time integrity if `startTime` or `endTime` are part of updates
+  async editEvent(
+    editor: User,
+    event: EventID,
+    updates: Partial<Omit<Event, "_id">>,
+  ): Promise<Empty | { error: string }> {
     try {
-      const existingEvent = await this.events.findOne({ _id: event });
+      // only coaches may edit
+      const role = await this.userDirectory.getUserRole(editor);
+      if (role !== Role.Coach) {
+        return {
+          error: `User with id '${editor}' is not authorized to edit events.`,
+        };
+      }
 
+      // make sure only the updateable fields are there
+      const EDITABLE_FIELDS = new Set<keyof Omit<Event, "_id">>([
+        "startTime",
+        "endTime",
+        "location",
+        "title",
+        "description",
+        "link",
+      ]);
+      const badKeys = Object.keys(updates).filter(
+        (k) => !EDITABLE_FIELDS.has(k as keyof Omit<Event, "_id">),
+      );
+      if (badKeys.length > 0) {
+        return {
+          error: `Unknown or disallowed fields in updates: ${
+            badKeys.join(", ")
+          }`,
+        };
+      }
+
+      // Fetch existing event
+      const existingEvent = await this.events.findOne({ _id: event });
       if (!existingEvent) {
         return { error: `Event with ID '${event}' not found.` };
       }
 
-      // If either startTime or endTime is being updated, validate the new combination
-      if (updates.startTime !== undefined || updates.endTime !== undefined) {
-        const newStartTime = updates.startTime || existingEvent.startTime;
-        const newEndTime = updates.endTime || existingEvent.endTime;
+      // Basic runtime type checks for Dates on provided fields
+      const isValidDate = (d: unknown): d is Date =>
+        d instanceof Date && !isNaN(d.getTime());
 
-        if (newStartTime.getTime() >= newEndTime.getTime()) {
+      if (updates.startTime !== undefined && !isValidDate(updates.startTime)) {
+        return { error: "startTime must be a valid Date object." };
+      }
+      if (updates.endTime !== undefined && !isValidDate(updates.endTime)) {
+        return { error: "endTime must be a valid Date object." };
+      }
+
+      // Tif either boundary is changing, ensure start < end
+      if (updates.startTime !== undefined || updates.endTime !== undefined) {
+        const newStart = updates.startTime ?? existingEvent.startTime;
+        const newEnd = updates.endTime ?? existingEvent.endTime;
+        if (!isValidDate(newStart) || !isValidDate(newEnd)) {
+          return { error: "startTime/endTime must be valid Date objects." };
+        }
+        if (newStart.getTime() >= newEnd.getTime()) {
           return { error: "Updated start time must be before end time." };
         }
       }
 
-      const result = await this.events.updateOne(
-        { _id: event },
-        { $set: updates },
-      );
+      // Build MongoDB update ($set / $unset)
+      // Clearing policy: description/link can be cleared by passing "" (or null at runtime).
+      const $set: Partial<Event> = {};
+      const $unset: Record<string, ""> = {};
+
+      for (const [k, v] of Object.entries(updates)) {
+        if (v === undefined) continue; // omit → no change
+
+        if (
+          (k === "description" || k === "link") &&
+          (v === "" || (v as any) === null)
+        ) {
+          $unset[k] = "";
+          continue;
+        }
+
+        // For all other fields, set directly (types assumed correct at this layer)
+        ($set as any)[k] = v;
+      }
+
+      // If nothing to change, short-circuit
+      if (Object.keys($set).length === 0 && Object.keys($unset).length === 0) {
+        return {};
+      }
+
+      const updateDoc: Record<string, unknown> = {};
+      if (Object.keys($set).length) updateDoc.$set = $set;
+      if (Object.keys($unset).length) updateDoc.$unset = $unset;
+
+      // 7) Apply the update
+      const result = await this.events.updateOne({ _id: event }, updateDoc);
 
       if (result.matchedCount === 0) {
-        // This case should ideally be caught by findOne above, but as a safeguard
+        // Extremely unlikely given the earlier read, but guard anyway.
         return { error: `Event with ID '${event}' not found (update failed).` };
       }
+
       return {};
     } catch (e) {
       console.error("Error editing event:", e);
@@ -183,25 +272,32 @@ export default class CalanderEventConcept {
   }
 
   /**
-   * @action duplicateEvent
+   * creates a new event, exactly the same as the requested event
    *
-   * @param {Object} args - The arguments for duplicating an event.
-   * @param {UserIdentifier} args.duplicator - The identifier of the user duplicating the event.
-   * @param {EventID} args.event - The ID of the event to duplicate.
+   * @requires the duplicator must exist
+   * @requires the duplicator must be a coach
+   * @requires the event you want to duplicate exists
    *
-   * @returns {Promise<{duplicateEvent: EventID} | {error: string}>} Returns the ID of the new, duplicated event on success, or an error message.
+   * @effects duplicated the event exactly as it is, and returns the id
+   *          of the new event
    *
-   * @requires The specified event must exist.
-   *           (External: user exists with name = duplicator and role = coach)
-   * @effects Creates a new event with the same parameters as the inputted event, but with a new unique ID.
+   * @param duplicator - The identifier of the user duplicating the event.
+   * @param event - The ID of the event to duplicate.
+   *
+   * @returns the ID of the new, duplicated event on success, or an error message.
    */
-  async duplicateEvent({
-    duplicator, // As per spec, 'duplicator' is a string. Not used for internal checks.
-    event,
-  }: {
-    duplicator: User;
-    event: EventID;
-  }): Promise<{ duplicateEvent: EventID } | { error: string }> {
+  async duplicateEvent(
+    duplicator: User,
+    event: EventID,
+  ): Promise<{ duplicateEvent: EventID } | { error: string }> {
+    // only coaches may edit
+    const role = await this.userDirectory.getUserRole(duplicator);
+    if (role !== Role.Coach) {
+      return {
+        error: `User with id '${duplicator}' is not authorized to edit events.`,
+      };
+    }
+
     // Requires: event exists
     try {
       const existingEvent = await this.events.findOne({ _id: event });
@@ -226,22 +322,27 @@ export default class CalanderEventConcept {
   }
 
   /**
-   * @action getEventsByDate
+   * Gets all of the objects on a given day
    *
-   * @param {Object} args - The arguments for querying events by date.
-   * @param {number} args.day - Day of month (1-31)
-   * @param {number} args.month - Month (1-12)
-   * @param {number} args.year - Full year (e.g. 2025)
+   * @requires day, month, and year are all valid
+   * @effects returns all of the events that fall on that day
    *
-   * @returns {Promise<{events: Event[]} | {error: string}>} Returns an array of events that occur on the specified day or an error message.
+   * @param day - Day of month (1-31)
+   * @param month - Month (1-12)
+   * @param year - Full year (e.g. 2025)
    *
-   * Notes: This returns events that overlap any portion of the given day. The implementation
-   * uses local timezone (JS Date constructed with year, month-1, day). If you need UTC
-   * semantics, convert inputs accordingly before calling.
+   * @returns an array of events that occur on the specified day or an error message.
    */
-  async getEventsByDate({ day, month, year }:{ day: number; month: number; year: number; }): Promise<{ events: Event[] } | { error: string }> {
+  async getEventsByDate(
+    day: number,
+    month: number,
+    year: number,
+  ): Promise<{ events: Event[] } | { error: string }> {
     // Basic parameter validation
-    if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) {
+    if (
+      !Number.isInteger(day) || !Number.isInteger(month) ||
+      !Number.isInteger(year)
+    ) {
       return { error: "day, month and year must be integers." };
     }
 
@@ -250,7 +351,10 @@ export default class CalanderEventConcept {
     const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
 
     // Validate that the date components did not roll over (e.g., invalid day like Feb 30)
-    if (startOfDay.getFullYear() !== year || startOfDay.getMonth() !== month - 1 || startOfDay.getDate() !== day) {
+    if (
+      startOfDay.getFullYear() !== year ||
+      startOfDay.getMonth() !== month - 1 || startOfDay.getDate() !== day
+    ) {
       return { error: `Invalid date: ${year}-${month}-${day}` };
     }
 
@@ -267,5 +371,4 @@ export default class CalanderEventConcept {
       return { error: "Failed to query events due to a database error." };
     }
   }
-
 }

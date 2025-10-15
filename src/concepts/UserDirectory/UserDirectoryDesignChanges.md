@@ -40,6 +40,7 @@ Query helpers added to support coach workflows:
 - `getWeeklyMileage(userId)` — (planned) returns mileage for the current week; intended to integrate with `TrainingRecords`.
 - `getAthletesByGender(gender)` — returns users filtered by gender to support coach queries and reports.
 - `getUserRole(userId)` - returns users role athlete or coach for role verification in other concepts
+- `getUser(userId)` - returns the user upon the id
 
 ### Design notes & assumptions
 - Identity updates operate on `userId` to ensure stability across changes to display names or other mutable fields.

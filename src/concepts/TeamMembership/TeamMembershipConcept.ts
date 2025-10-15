@@ -10,7 +10,7 @@ const PREFIX = "TeamMembership" + ".";
 type UserId = ID;
 type TeamID = ID;
 
-interface Team {
+export interface Team {
   _id: TeamID;
   name: string;
   passKey: string;
