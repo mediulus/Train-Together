@@ -15,7 +15,6 @@
                 createTeam(title: String, coach: User, passKey: String): (newTeam: Team)
                     requires: 
                         - no team with this name exists
-                        - coach exists and coach.role = coach
                         - this coach does not coach another team
                     effects: generates a new team object with name = title, coach = coach, passKey = passKey
 
@@ -23,25 +22,21 @@
                     requires: 
                         - Team exists with this title
                         - passKey = team.passKey
-                        - athlete exists
-                        - athlete is already a member of this team
-                        - athlete.role = athlete
+                        - athlete is not already a member of this team
                     effects: adds the athlete to the team.athletes set
 
                 removeAthlete(title: String, athleteName: String)
                     requires: 
                         - Team exists with this title
-                        - User exists with this name
-                        - users.role = athlete
                         - user is in team.athletes
                     effects: removes the athlete with that name from the team.athletes set
 
                 getTeamByCoach(coachId: ID): coachesTeam: Team
-                    requires: coach exists and is a coach
+                    requires: the coach has a team
                     effects: returns the team the coach owns 
 
                 getTeamByAthlete(athleteId: ID): athletesTeam: Team
-                    requires: athlete exists and is an athlete
+                    requires: the athlete has a team
                     effects: returns the team the athlete is a part of 
 
                 getAthletesByTeam(teamId): Athlete[]

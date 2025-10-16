@@ -1,19 +1,13 @@
-import { Collection, Db, MongoClient } from "npm:mongodb"; 
-import { ID, Empty } from "@utils/types.ts"; 
-import { freshID, getDb } from "@utils/database.ts"; 
-import { GeminiLLM } from "./gemini-llm.ts";
-import {User} from '../UserDirectory/UserDirectoryConcept.ts'
-import { userInfo } from "node:os";
+import { Collection, Db } from "npm:mongodb";
+import { ID } from "@utils/types.ts";
+import { freshID } from "@utils/database.ts";
+import {User} from "../UserDirectory/UserDirectoryConcept.ts";
 
-type UserID = ID;
-type trainingRecordId = ID;
-
-export interface CoachFields {
-  percentage: number;
-  note: string;
-}
 
 export interface AthleteData {
+  id: ID;
+  athlete: User;
+  day: Date;
   mileage?: number;
   stress?: number; // 1-10 scale
   sleep?: number; // hours
@@ -21,87 +15,260 @@ export interface AthleteData {
   exerciseHeartRate?: number; // exercise heart rate in bpm
   perceivedExertion?: number; // 1-10 scale
   notes?: string;
-  [key: string]: any; // Allow additional fields
 }
 
-export interface DailyRecord {
-  _id: ID; // MongoDB document ID
-  date: string; // Stored as YYYY-MM-DD string
-  athleteId: ID; // Reference to the athlete's ID
-  coachRecommendations?: CoachFields;
-  athleteData?: AthleteData;
-  mileageRecommendation?: number; // Derived from coach's percentage and athlete's baseline
-}
-
-
-export interface TrainingChange {
+export interface ComparisonMetrics {
   averageActivityMetric: number | null;
   trendDirection: "up" | "down" | "flat";
 }
 
 export interface WeeklySummary {
-  athleteId: ID;
-  weekStart: string; // YYYY-MM-DD string
-  totalMileage: number;
-  averageStress: TrainingChange;
-  averageSleep: TrainingChange;
-  averageRestingHeartRate: TrainingChange;
-  averageExerciseHeartRate: TrainingChange;
-  aiRecommendation: string; 
+  athlete: User;
+  weekStart: Date;
+  mileageSoFar: number;
+  averageStress: ComparisonMetrics;
+  averageSleep: ComparisonMetrics;
+  averageRestingHeartRate: ComparisonMetrics;
+  averageExerciseHeartRate: ComparisonMetrics;
+  averagePerceivedExertion: ComparisonMetrics;
+  athleteDataDailyCollectionForWeek: AthleteData[];
 }
 
-const PREFIX = 'TrainingRecords' + '.'
+const PREFIX = "TrainingRecords" + ".";
+
+///// WEEKLY SUMMARY HELPER FUNCTIONS
+function atMidnight(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+function sundayOf(date: Date): Date {
+  const d = atMidnight(date);
+  const day = d.getDay(); // 0 = Sun
+  const out = new Date(d);
+  out.setDate(d.getDate() - day);
+  return out;
+}
+
+function saturdayOf(date: Date): Date {
+  const s = sundayOf(date);
+  const out = new Date(s);
+  out.setDate(s.getDate() + 6);
+  return out;
+}
+
+
+function calculateMetrics(
+  data: AthleteData[],
+  fields: (keyof AthleteData)[],
+): { totalMileage: number; averages: Record<string, number | null> } {
+  let totalMileage = 0;
+  const sums: Record<string, number> = {};
+  const counts: Record<string, number> = {};
+
+  for (const field of fields) {
+    sums[field as string] = 0;
+    counts[field as string] = 0;
+  }
+
+  for (const record of data) {
+    totalMileage += record.mileage ?? 0;
+    for (const field of fields) {
+      const value = record[field as keyof AthleteData];
+      if (typeof value === "number" && value !== null && !isNaN(value)) {
+        sums[field as string] += value;
+        counts[field as string]++;
+      }
+    }
+  }
+
+  const averages: Record<string, number | null> = {};
+  for (const field of fields) {
+    averages[field as string] = counts[field as string] > 0
+      ? sums[field as string] / counts[field as string]
+      : null;
+  }
+
+  return { totalMileage, averages };
+}
+
+function compareAverages(
+  currentAvg: number | null,
+  prevAvg: number | null,
+): ComparisonMetrics {
+  if (currentAvg === null && prevAvg === null) {
+    return { averageActivityMetric: null, trendDirection: "flat" };
+  }
+  if (currentAvg === null) { // Prev exists, current doesn't
+    return { averageActivityMetric: null, trendDirection: "down" };
+  }
+  if (prevAvg === null) { // Current exists, prev doesn't
+    return { averageActivityMetric: currentAvg, trendDirection: "up" };
+  }
+
+  // Both averages exist, compare them
+  // Define a small tolerance for "flat" to avoid micro-changes causing trends
+  const tolerance = 0.01;
+
+  const diff = currentAvg - prevAvg;
+
+  const trend: "up" | "down" | "flat" = Math.abs(diff) < tolerance
+    ? "flat"
+    : diff > 0
+    ? "up"
+    : "down";
+
+  return { averageActivityMetric: currentAvg, trendDirection: trend };
+}
+
 
 export default class TrainingRecordsConcept {
   private weeklyRecords: Collection<WeeklySummary>;
-  private dailyRecords: Collection<DailyRecord>;
+  private athleteData: Collection<AthleteData>;
 
-  constructor(private readonly db:Db) {
-  // Initialize the two collections used by this concept
-  this.weeklyRecords = this.db.collection(PREFIX + 'weeklyRecords');
-  this.dailyRecords = this.db.collection(PREFIX + 'dailyRecords');
+  constructor(
+    private readonly db: Db,
+  ) {
+    this.weeklyRecords = db.collection<WeeklySummary>(PREFIX + "weeklyRecords");
+    this.athleteData = db.collection<AthleteData>(PREFIX + "athleteData");
+    this.athleteData = db.collection<AthleteData>(PREFIX + "athleteData");
   }
 
-  async createRecommendation(
-    {Date, Users, percentage, note, creator}:
-    {Date: string, Users: User[], percentage: number, note?: string, creator: User}
-  ): Promise<DailyRecord | {error: string}> {
-
-    if (creator.role !== 'coach') {
-      return {error: `User ${creator.name} is not a coach and cannot create a training recommendation`}
+  /**
+   * @requires all logs are valid keys
+   * @effects edits or logs an athlete's data from that day with the corresponding log values
+   *
+   * @param date The date of the log entry
+   * @param athlete The athlete object
+   * @param logValues The values to log (partial AthleteData without athleteId and day)
+   *
+   * @returns The updated or created AthleteData entry, or an error message
+   */
+  async logData(date: Date, athlete: User, logValues: Partial<Omit<AthleteData, "athlete" | "day">>,
+  ): Promise<AthleteData | { error: string }> {
+    //validate all log values are valid keys
+    const validKeys: (keyof Omit<AthleteData, "athleteId" | "day">)[] = [
+      "mileage",
+      "stress",
+      "sleep",
+      "restingHeartRate",
+      "exerciseHeartRate",
+      "perceivedExertion",
+      "notes",
+    ];
+    for (const key of Object.keys(logValues)) {
+      if (
+        !validKeys.includes(key as keyof Omit<AthleteData, "athleteId" | "day">)
+      ) {
+        return { error: `Invalid log key: ${key}` };
+      }
     }
 
-    // Iterate over the provided users using TypeScript's `for...of` syntax.
-    // Use the `weeklyMileage` field from the `User` model (may be number or null).
-    const recordsToInsert: DailyRecord[] = [];
+    const day = atMidnight(date);
+    // Check if an entry already exists for this athlete and day
+    const existingEntry = await this.athleteData.findOne({
+      
+      athleteId: athlete,
+      day: day,
+    });
 
-    for (const user of Users) {
-      const userMileage = user.weeklyMileage ?? 0;
-
-      const rec: DailyRecord = {
-        _id: freshID() as ID,
-        date: Date,
-        athleteId: user._id,
-        coachRecommendations: { percentage, note: note ?? "" },
-        athleteData: { mileage: userMileage },
-        mileageRecommendation: Math.round((percentage / 100) * userMileage),
+    if (existingEntry) {
+      // Update the existing entry with new log values
+      const updatedEntry = { ...existingEntry, ...logValues };
+      await this.athleteData.updateOne(
+        { _id: existingEntry._id },
+        { $set: updatedEntry },
+      );
+      return updatedEntry;
+    } else {
+      // Create a new entry
+      const newEntry: AthleteData = {
+        id: freshID(),
+        athlete: athlete,
+        day: day,
+        ...logValues,
       };
-
-      recordsToInsert.push(rec);
+      await this.athleteData.insertOne(newEntry);
+      return newEntry;
     }
+  }
+
+  /**
+   * Creates a weekly summary for the given athlete without the AI recommendation.
+   *
+   * @requires there is athlete data for the week
+   * @effects uses todaysDate to find the week sunday-saturday that the
+   *          week falls in and acquires all of the athletes datas from
+   *          that week and the week prior and calculates averages and
+   *          changes from the previous week and generates a weekly summary
+   *          without the ai recomendation yet
+   *
+   * @param requester - The ID of the requester (coach)
+   * @param athlete - The ID of the athlete
+   * @param todaysDate - The current date
+   *
+   * @returns A promise that resolves to the weekly summary or an error message
+   */
+  async createWeeklySummary(athlete: User, todaysDate: Date): Promise<WeeklySummary | { error: string }> {
+    //find the week range (sunday-saturday) for todaysDate
+    const weekStart = sundayOf(todaysDate);
+    const weekEnd = saturdayOf(todaysDate);
+    const prevWeekStart = new Date(weekStart);
+    prevWeekStart.setDate(weekStart.getDate() - 7);
+    const prevWeekEnd = new Date(prevWeekStart);
+    prevWeekEnd.setDate(prevWeekStart.getDate() + 6);
+
+    // Fetch current week's data from the database
+    const currentWeekData: AthleteData[] = await this.athleteData.find({
+      athleteId: athlete,
+      day: { $gte: atMidnight(weekStart), $lte: atMidnight(weekEnd) }
+    }).sort({ day: 1 }).toArray(); 
+    if (currentWeekData.length === 0) {
+        return { error: "No athlete data found for the current week." };
+    }
+
+    // Fetch previous week's data from the database
+    const prevWeekData = await this.athleteData.find({
+      athleteId: athlete,
+      day: { $gte: atMidnight(prevWeekStart), $lte: atMidnight(prevWeekEnd) }
+    }).toArray();
+
+     const metricFields: (keyof AthleteData)[] = [
+        "stress", 
+        "sleep", 
+        "restingHeartRate", 
+        "exerciseHeartRate", 
+        "perceivedExertion"
+    ];
+
+    const currentMetrics = calculateMetrics(currentWeekData, metricFields);
+    const prevMetrics = calculateMetrics(prevWeekData, metricFields);
+    
+    // Build the weekly summary
+    const weeklySummary: WeeklySummary = {
+        athlete: athlete,
+        weekStart: weekStart,
+        mileageSoFar: currentMetrics.totalMileage,
+        athleteDataDailyCollectionForWeek: currentWeekData,
+        averageStress: compareAverages(currentMetrics.averages.stress, prevMetrics.averages.stress),
+        averageSleep: compareAverages(currentMetrics.averages.sleep, prevMetrics.averages.sleep),
+        averageRestingHeartRate: compareAverages(currentMetrics.averages.restingHeartRate, prevMetrics.averages.restingHeartRate),
+        averageExerciseHeartRate: compareAverages(currentMetrics.averages.exerciseHeartRate, prevMetrics.averages.exerciseHeartRate),
+        averagePerceivedExertion: compareAverages(currentMetrics.averages.perceivedExertion, prevMetrics.averages.perceivedExertion),
+    };
 
     try {
-      // Insert all created daily records (no-op if empty)
-      if (recordsToInsert.length > 0) {
-        await this.dailyRecords.insertMany(recordsToInsert);
-      }
-      // Return the first created record as an example success response
-      return recordsToInsert[0] ?? { error: "No records created" };
-    } catch (dbError) {
-      console.error("Database error creating training recommendations:", dbError);
-      return { error: "Failed to create training recommendation due to database error." };
+        await this.weeklyRecords.updateOne(
+            { athleteId: athlete, weekStart: weekStart },
+            { $set: weeklySummary },
+            { upsert: true }
+        );
+    } catch (e) {
+        console.error("Database error creating weekly summary:", e);
+        return { error: "Failed to store weekly summary due to a database error." };
     }
-  }
 
-  async logAthleteData({athlete, D})
+    // Return the generated object
+    return weeklySummary;
   }
+}

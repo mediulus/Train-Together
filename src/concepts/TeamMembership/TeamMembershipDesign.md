@@ -7,3 +7,6 @@ To make common UI flows easier, I added the following actions (with intended beh
 - getAthletesByTeam — return the list of athlete IDs for a given team (lookup by team ID).
 
 I also added a dedicated team ID (_id) to the team state so lookups are stable and safe even if a team's name changes.
+
+UPDATES:
+I also adapted the requirements to not care about the roke of the users so that the concepts remained seperate

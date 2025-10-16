@@ -19,30 +19,23 @@
                 requires: event exists
                 effects: returns the existing event
                 
-            createEvent(creator: ID, startTime: DateTime, endTime: DateTime, location: String, title: String, description?: String, link?: URL) : (event: ID)
+            createEvent(startTime: DateTime, endTime: DateTime, location: String, title: String, description?: String, link?: URL) : (event: ID)
                 requires: 
-                    - creator exists
-                    - creator role = coach
                     - startTime < endTime
                 effects: generates a new Event with startTime = startTime, endTime = endTime, location = location, title = title and the optional parameters description = description and link = link
 
             deleteEvent(deleter: ID, event: ID)
-                requires: user exists with name = deleter and role = coach, and event exists
+                requires: event exists
                 effects: deletes the event
 
             editEvent(editor: ID, event: ID, fields..., updateValues...)
-                requires: 
-                    - user exists 
-                    - role = coach
-                    -  event exists
+                requires:
+                    - all update values are valid keys
                     - if updating start or end, start < end
                 effects: updates the event with the given fields and their new values
 
             duplicateEvent(duplicator: ID, event: ID): (duplicateEvent: Event)
-                requires: 
-                    - user exists 
-                    - role = coach
-                    - event exists
+                requires: event exists
                 effects: creates a new event with the same parameters as the inputted event
 
             getEventsByDate(day: number, month: number, year: number): Event[]

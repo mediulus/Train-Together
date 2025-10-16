@@ -1,14 +1,10 @@
 import { Collection, Db } from "npm:mongodb";
 import { Empty, ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
-import UserDirectoryConcept, {
-  Role,
-} from "../UserDirectory/UserDirectoryConcept.ts";
 
 const PREFIX = "CalnderEvent" + ".";
 
 type EventID = ID;
-type User = ID;
 
 /**
  * @interface Event
@@ -30,10 +26,8 @@ export interface Event {
  */
 export default class CalanderEventConcept {
   private events: Collection<Event>;
-  private userDirectory: UserDirectoryConcept;
 
-  constructor(private readonly db: Db, userDirectory?: UserDirectoryConcept) {
-    this.userDirectory = userDirectory ?? new UserDirectoryConcept(db);
+  constructor(private readonly db: Db) {
     this.events = this.db.collection<Event>(PREFIX + "events");
   }
 
@@ -54,13 +48,9 @@ export default class CalanderEventConcept {
   /**
    * creates a new calander event for the teams calander
    *
-   * @requires creator is a coach
-   * @requires creator exists
    * @requires startTime < endTime
-   *
    * @effects generates and returns a new calander event with the corresponding attributes
    *
-   * @param creator The identifier of the user creating the event.
    * @param startTime The start time of the event.
    * @param endTime The end time of the event.
    * @param location The physical location of the event.
@@ -71,21 +61,13 @@ export default class CalanderEventConcept {
    * @returns Returns the ID of the newly created event on success, or an error message.
    */
 
-  async createEvent(
-    creator: User,
-    startTime: Date,
+  async createEvent(startTime: Date,
     endTime: Date,
     location: string,
     title: string,
     description?: string,
     link?: string,
   ): Promise<{ event: EventID } | { error: string }> {
-    //verify user and role
-    const userRole = await this.userDirectory.getUserRole(creator);
-    if (userRole !== Role.Coach) {
-      return { error: `User with id ${creator} cannot create an event` };
-    }
-
     //verify timing constraint
     if (startTime.getTime() >= endTime.getTime()) {
       return { error: "Event start time must be before end time." };
@@ -113,27 +95,14 @@ export default class CalanderEventConcept {
   /**
    * deletes the event based on the event id
    *
-   * @requires deleter exists
-   * @requires deleter is a coach
    * @requires event exists
-   *
    * @effects deletes the event with the given id
    *
-   * @param deleter The identifier of the user deleting the event.
    * @param event The ID of the event to delete.
    *
    * @returns an empty object on success, or an error message.
    */
-  async deleteEvent(
-    deleter: User,
-    event: EventID,
-  ): Promise<Empty | { error: string }> {
-    // verifies deleter
-    const userRole = await this.userDirectory.getUserRole(deleter);
-    if (userRole !== Role.Coach) {
-      return { error: `User with id ${deleter} cannot create an event` };
-    }
-
+  async deleteEvent( event: EventID): Promise<Empty | { error: string }> {
     // Requires: event exists
     try {
       const result = await this.events.deleteOne({ _id: event });
@@ -152,11 +121,9 @@ export default class CalanderEventConcept {
    * Edits a part(s) of the event
    *
    * @requires all updates are an attribute of event
-   * @required editor exists
-   * @requires editor is a coach
    * @requires if changing start or end time that they are still start < end
-   *
    * @effects edits the event
+   * 
    * @param {Object} args - The arguments for editing an event.
    * @param {UserIdentifier} args.editor - The identifier of the user editing the event.
    * @param {EventID} args.event - The ID of the event to edit.
@@ -164,20 +131,8 @@ export default class CalanderEventConcept {
    *
    * @returns an empty object on success, or an error message.
    */
-  async editEvent(
-    editor: User,
-    event: EventID,
-    updates: Partial<Omit<Event, "_id">>,
-  ): Promise<Empty | { error: string }> {
+  async editEvent(event: EventID,updates: Partial<Omit<Event, "_id">>): Promise<Empty | { error: string }> {
     try {
-      // only coaches may edit
-      const role = await this.userDirectory.getUserRole(editor);
-      if (role !== Role.Coach) {
-        return {
-          error: `User with id '${editor}' is not authorized to edit events.`,
-        };
-      }
-
       // make sure only the updateable fields are there
       const EDITABLE_FIELDS = new Set<keyof Omit<Event, "_id">>([
         "startTime",
@@ -274,30 +229,15 @@ export default class CalanderEventConcept {
   /**
    * creates a new event, exactly the same as the requested event
    *
-   * @requires the duplicator must exist
-   * @requires the duplicator must be a coach
    * @requires the event you want to duplicate exists
-   *
    * @effects duplicated the event exactly as it is, and returns the id
    *          of the new event
    *
-   * @param duplicator - The identifier of the user duplicating the event.
    * @param event - The ID of the event to duplicate.
    *
    * @returns the ID of the new, duplicated event on success, or an error message.
    */
-  async duplicateEvent(
-    duplicator: User,
-    event: EventID,
-  ): Promise<{ duplicateEvent: EventID } | { error: string }> {
-    // only coaches may edit
-    const role = await this.userDirectory.getUserRole(duplicator);
-    if (role !== Role.Coach) {
-      return {
-        error: `User with id '${duplicator}' is not authorized to edit events.`,
-      };
-    }
-
+  async duplicateEvent(event: EventID): Promise<{ duplicateEvent: EventID } | { error: string }> {
     // Requires: event exists
     try {
       const existingEvent = await this.events.findOne({ _id: event });
