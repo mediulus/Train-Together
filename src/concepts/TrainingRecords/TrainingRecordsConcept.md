@@ -1,7 +1,8 @@
     concept TrainingRecords [User]:
-        purpose: Record athlete data, compute week-over-week summaries, and—using AI— generate short, factual notes summarizing how an athlete appears to be responding to training. (All data originates from a Google Sheet import; the AI reads the derived weekly summaries.)
 
-        principle:  Maintain canonical daily records and derive weekly summaries that power the dashboard. Any automation (e.g., AI notes, reminders) reads from these summaries and produces separate, reviewable outputs
+  purpose: Record athlete data and ultimately provide a weekly summary dashboard for each athlete. This dashboard displays trends from previous weeks, helping to identify issues or concerns in their training over time.
+
+  principle: Each athlete logs their daily data into the logger, which is then stored and aggregated into a weekly summary chart. This chart highlights changes in their training and the direction of trends, enabling athletes to observe both positive and negative impacts resulting from their training routines.
 
         state:
 

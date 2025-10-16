@@ -1,12 +1,27 @@
-While updating this concept I focused on actions that simplify frontend work—especially the coach's view when they want to see their athletes.
+# TeamMembership — Design Change Summary
 
-To make common UI flows easier, I added the following actions (with intended behavior):
+Streamlined to support common coach/athlete UI flows and keep role logic outside this concept. Key updates: stable team IDs, lookup helpers, and relaxed role checks (handled by UserDirectory or callers).
 
-- getTeamByCoach — return the team coached by a given coach ID.
-- getTeamByAthlete — return the team an athlete belongs to (lookup by athlete ID).
-- getAthletesByTeam — return the list of athlete IDs for a given team (lookup by team ID).
+## Rationale
+- Stable id avoids brittle name-based lookups and supports renames.
+- Helpers (getTeamByCoach, etc.) reduce frontend plumbing.
+- Role validation belongs with identity (UserDirectory), not membership.
 
-I also added a dedicated team ID (_id) to the team state so lookups are stable and safe even if a team's name changes.
+## State Changes
+- id: ID — canonical team identifier -- this is a new state
+- coach: User — intent is “coach user” -- these roles are no longer checked in action for modularity reasons
+- athletes: {Users} -- these roles are no longer checked in action for modularity reasons
 
-UPDATES:
-I also adapted the requirements to not care about the roke of the users so that the concepts remained seperate
+Note: Role constraints are documented but not enforced here.
+
+## Actions (Updated / Added)
+
+Changed the requirements surrounding roles for the following actions: 
+- createTeam(title, coach, passKey) → Team
+- addAthlete(title, athlete, passKey)
+- removeAthlete(title, athlete)
+
+I added these actions for future ui promting about the team while the athlete may be on the team or the coach may be on the team
+- getTeamByCoach(coachId) → Team
+- getTeamByAthlete(athleteId) → Team
+- getAthletesByTeam(teamId) → User[]

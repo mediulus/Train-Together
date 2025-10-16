@@ -1,15 +1,15 @@
 
-## UserDirectory — Design Change Summary
+# UserDirectory — Design Change Summary
 
 During implementation I decided to adopt Google sign-in as the primary authentication flow for the web front end. That decision influenced several state fields and actions in the `UserDirectory` concept. The goal is to: 1) support login via Google ID tokens, 2) record a user's primary authentication method and last login time, and 3) separate identity-related updates so they can be changed independently.
 
-### Rationale
+## Rationale
 
 - Google sign-in simplifies onboarding and reduces the need for a separate registration flow.
 - Storing a stable `userId` avoids relying on mutable fields like `name` for lookups and relationships.
 - Separate setters for identity attributes (name, role, gender) make it easier to update or revert individual attributes.
 
-### State changes
+## State changes
 
 The following fields are added or clarified in the concept state:
 
@@ -20,7 +20,7 @@ The following fields are added or clarified in the concept state:
 Notes:
 - Use `userId` as the canonical identifier for users throughout the system instead of `name`.
 
-### New / updated actions
+## New / updated actions
 
 Authentication and user creation:
 
@@ -42,7 +42,7 @@ Query helpers added to support coach workflows:
 - `getUserRole(userId)` - returns users role athlete or coach for role verification in other concepts
 - `getUser(userId)` - returns the user upon the id
 
-### Design notes & assumptions
+## Design notes & assumptions
 - Identity updates operate on `userId` to ensure stability across changes to display names or other mutable fields.
 - I intentionally kept identity setters separate rather than combining them into a single `setIdentificationCriteria` action. This enables independent updates and simpler UI flows for incremental prompts.
 - `getWeeklyMileage` is a planned integration point and may be implemented as a query that aggregates data from the `TrainingRecords` concept.

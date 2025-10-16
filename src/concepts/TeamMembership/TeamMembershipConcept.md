@@ -25,7 +25,7 @@
                         - athlete is not already a member of this team
                     effects: adds the athlete to the team.athletes set
 
-                removeAthlete(title: String, athleteName: String)
+                removeAthlete(title: String, athlete: User)
                     requires: 
                         - Team exists with this title
                         - user is in team.athletes
