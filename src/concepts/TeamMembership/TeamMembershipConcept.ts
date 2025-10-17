@@ -5,7 +5,7 @@ import { User } from "../UserDirectory/UserDirectoryConcept.ts";
 
 const PREFIX = "TeamMembership" + ".";
 
-type TeamID = ID;
+export type TeamID = ID;
 
 export interface Team {
   _id: TeamID;
@@ -26,18 +26,6 @@ export default class TeamMembershipConcept {
 
   constructor(private readonly db: Db) {
     this.teams = this.db.collection(PREFIX + "teams");
-    this.teams.createIndex({ name: 1 }, { unique: true }).catch((err) =>
-      console.error(
-        `Error creating unique index for TeamMembership.teams.name: ${err}`,
-      )
-    );
-
-    // Ensure a coach can only coach one team at a time.
-    this.teams.createIndex({ coach: 1 }, { unique: true }).catch((err) =>
-      console.error(
-        `Error creating unique index for TeamMembership.teams.coach: ${err}`,
-      )
-    );
   }
 
   /**

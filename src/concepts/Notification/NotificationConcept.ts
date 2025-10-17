@@ -3,7 +3,7 @@ import type { OAuth2Client } from "google-auth-library";
 import { google } from "googleapis";
 import { Empty, ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
-import  {Role, User} from "../UserDirectory/UserDirectoryConcept.ts";
+import  { User} from "../UserDirectory/UserDirectoryConcept.ts";
 import {type Event} from "../CalanderEvent/CalanderEventConcept.ts";
 
 const PREFIX = "Notifications.";

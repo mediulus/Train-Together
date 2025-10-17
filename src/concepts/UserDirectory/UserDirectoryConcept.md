@@ -2,8 +2,8 @@
 
     concept UserDirectory
             purpose: Register and manage users of the system with unique emails and roles.
-            principle: After a user registers with a role, they can be referenced by other concepts.
-
+            principle: When a new user logs on they will be prompted to log in with google. Once their account has been created, they will define their role as an athlete or a coach. If they are a coach there account will be created and they will move on, while athletes will be prompted to set certain attributes about themselves like their mileage, and gender. Additionally, if a coach wanted to get information about athletes, they could prompt to find all athletes of a certain gender or get an athletes weekly mileage.
+            
             state:
                 a set of Users with:
                     a id ID

@@ -1,6 +1,16 @@
+---
+timestamp: 'Thu Oct 16 2025 10:49:12 GMT-0400 (Eastern Daylight Time)'
+parent: '[[../20251016_104912.58e284a5.md]]'
+content_id: 723ea55c1a6b0ee3cd347b95a6014bfd9a0b6d56971c7d0b6d5d87e52cf11372
+---
+
+# response:
+
+```typescript
+// file: src/CalendarEvent/CalendarEventConcept.test.ts
 import { assertEquals, assertExists, assertInstanceOf, assertObjectMatch } from "jsr:@std/assert";
 import { testDb } from "@utils/database.ts";
-import CalanderEventConcept, { Event } from "./CalanderEventConcept.ts";
+import CalanderEventConcept, { Event } from "./CalendarEventConcept.ts";
 import { ID } from "@utils/types.ts";
 
 Deno.test("CalendarEventConcept", async (t) => {
@@ -154,37 +164,35 @@ Deno.test("CalendarEventConcept", async (t) => {
     });
 
     await t.step("effects: updates the event with the given fields and their new values", async () => {
-  const newStartTime = createDate(2024, 7, 22, 8, 30);
-  const newEndTime = createDate(2024, 7, 22, 9, 30);
-  const newLocation = "Park";
-  const newTitle = "Morning Stretch";
-  const newLink = "http://newlink.com";
+      const newStartTime = createDate(2024, 7, 22, 8, 30);
+      const newEndTime = createDate(2024, 7, 22, 9, 30);
+      const newLocation = "Park";
+      const newTitle = "Morning Stretch";
+      const newLink = "http://newlink.com";
 
-  const editResult = await concept.editEvent(eventId, {
-    startTime: newStartTime,
-    endTime: newEndTime,
-    location: newLocation,
-    title: newTitle,
-    description: "",   // ← use "" (or null) to CLEAR the field
-    link: newLink,
-  });
-  assertEquals(editResult, {}); // Empty object for success
+      const editResult = await concept.editEvent(eventId, {
+        startTime: newStartTime,
+        endTime: newEndTime,
+        location: newLocation,
+        title: newTitle,
+        description: null, // Test clearing description
+        link: newLink,
+      });
+      assertEquals(editResult, {}); // Empty object for success
 
-  const updatedEvent = await concept.getEvent(eventId);
-  assertInstanceOf(updatedEvent, Object);
-  assertEquals("error" in updatedEvent, false);
-  assertObjectMatch(updatedEvent as Event, {
-    _id: eventId,
-    startTime: newStartTime,
-    endTime: newEndTime,
-    location: newLocation,
-    title: newTitle,
-    link: newLink,
-  });
-  // After $unset, the field won't exist, so reading it is `undefined`
-  assertEquals((updatedEvent as Event).description, undefined);
-});
-
+      const updatedEvent = await concept.getEvent(eventId);
+      assertInstanceOf(updatedEvent, Object);
+      assertEquals("error" in updatedEvent, false);
+      assertObjectMatch(updatedEvent as Event, {
+        _id: eventId,
+        startTime: newStartTime,
+        endTime: newEndTime,
+        location: newLocation,
+        title: newTitle,
+        link: newLink,
+      });
+      assertEquals((updatedEvent as Event).description, undefined); // Ensure description was cleared
+    });
   });
 
   await t.step("4. duplicateEvent confirms requires and effects", async (t) => {
@@ -449,3 +457,4 @@ Deno.test("CalendarEventConcept", async (t) => {
 
   await client.close();
 });
+```

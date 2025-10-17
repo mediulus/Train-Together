@@ -1,8 +1,7 @@
 import { Collection, Db } from "npm:mongodb";
 import { ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
-import {User} from "../UserDirectory/UserDirectoryConcept.ts";
-
+import { User } from "../UserDirectory/UserDirectoryConcept.ts";
 
 export interface AthleteData {
   id: ID;
@@ -42,23 +41,20 @@ function atMidnight(d: Date): Date {
   x.setHours(0, 0, 0, 0);
   return x;
 }
-function sundayOf(date: Date): Date {
-  const d = atMidnight(date);
-  const day = d.getDay(); // 0 = Sun
-  const out = new Date(d);
-  out.setDate(d.getDate() - day);
+function sundayOf(d: Date): Date {
+  const x = atMidnight(d);
+  const day = x.getDay(); // 0 = Sun
+  const out = new Date(x);
+  out.setDate(x.getDate() - day);
+  return out;
+}
+function nextSunday(startSunday: Date): Date {
+  const out = new Date(startSunday);
+  out.setDate(out.getDate() + 7);
   return out;
 }
 
-function saturdayOf(date: Date): Date {
-  const s = sundayOf(date);
-  const out = new Date(s);
-  out.setDate(s.getDate() + 6);
-  return out;
-}
-
-
-function calculateMetrics(
+export function calculateMetrics(
   data: AthleteData[],
   fields: (keyof AthleteData)[],
 ): { totalMileage: number; averages: Record<string, number | null> } {
@@ -72,7 +68,9 @@ function calculateMetrics(
   }
 
   for (const record of data) {
-    totalMileage += record.mileage ?? 0;
+    if (record.mileage !== undefined) {
+      totalMileage += record.mileage;
+    }
     for (const field of fields) {
       const value = record[field as keyof AthleteData];
       if (typeof value === "number" && value !== null && !isNaN(value)) {
@@ -92,7 +90,7 @@ function calculateMetrics(
   return { totalMileage, averages };
 }
 
-function compareAverages(
+export function compareAverages(
   currentAvg: number | null,
   prevAvg: number | null,
 ): ComparisonMetrics {
@@ -121,7 +119,6 @@ function compareAverages(
   return { averageActivityMetric: currentAvg, trendDirection: trend };
 }
 
-
 export default class TrainingRecordsConcept {
   private weeklyRecords: Collection<WeeklySummary>;
   private athleteData: Collection<AthleteData>;
@@ -130,7 +127,6 @@ export default class TrainingRecordsConcept {
     private readonly db: Db,
   ) {
     this.weeklyRecords = db.collection<WeeklySummary>(PREFIX + "weeklyRecords");
-    this.athleteData = db.collection<AthleteData>(PREFIX + "athleteData");
     this.athleteData = db.collection<AthleteData>(PREFIX + "athleteData");
   }
 
@@ -144,10 +140,13 @@ export default class TrainingRecordsConcept {
    *
    * @returns The updated or created AthleteData entry, or an error message
    */
-  async logData(date: Date, athlete: User, logValues: Partial<Omit<AthleteData, "athlete" | "day">>,
+  async logData(
+    date: Date,
+    athlete: User,
+    logValues: Partial<Omit<AthleteData, "athlete" | "day">>,
   ): Promise<AthleteData | { error: string }> {
     //validate all log values are valid keys
-    const validKeys: (keyof Omit<AthleteData, "athleteId" | "day">)[] = [
+    const validKeys: (keyof Omit<AthleteData, "athlete" | "day">)[] = [
       "mileage",
       "stress",
       "sleep",
@@ -158,7 +157,7 @@ export default class TrainingRecordsConcept {
     ];
     for (const key of Object.keys(logValues)) {
       if (
-        !validKeys.includes(key as keyof Omit<AthleteData, "athleteId" | "day">)
+        !validKeys.includes(key as keyof Omit<AthleteData, "athlete" | "day">)
       ) {
         return { error: `Invalid log key: ${key}` };
       }
@@ -167,8 +166,7 @@ export default class TrainingRecordsConcept {
     const day = atMidnight(date);
     // Check if an entry already exists for this athlete and day
     const existingEntry = await this.athleteData.findOne({
-      
-      athleteId: athlete,
+      athlete: athlete,
       day: day,
     });
 
@@ -209,63 +207,83 @@ export default class TrainingRecordsConcept {
    *
    * @returns A promise that resolves to the weekly summary or an error message
    */
-  async createWeeklySummary(athlete: User, todaysDate: Date): Promise<WeeklySummary | { error: string }> {
+  async createWeeklySummary(
+    athlete: User,
+    todaysDate: Date,
+  ): Promise<WeeklySummary | { error: string }> {
     //find the week range (sunday-saturday) for todaysDate
-    const weekStart = sundayOf(todaysDate);
-    const weekEnd = saturdayOf(todaysDate);
+    const weekStart = sundayOf(todaysDate); // inclusive
+    const weekEndExcl = nextSunday(weekStart);
     const prevWeekStart = new Date(weekStart);
-    prevWeekStart.setDate(weekStart.getDate() - 7);
-    const prevWeekEnd = new Date(prevWeekStart);
-    prevWeekEnd.setDate(prevWeekStart.getDate() + 6);
+    prevWeekStart.setDate(prevWeekStart.getDate() - 7);
+    const prevWeekEndExcl = weekStart;
 
     // Fetch current week's data from the database
-    const currentWeekData: AthleteData[] = await this.athleteData.find({
-      athleteId: athlete,
-      day: { $gte: atMidnight(weekStart), $lte: atMidnight(weekEnd) }
-    }).sort({ day: 1 }).toArray(); 
+    const currentWeekData = await this.athleteData.find({
+      athlete: athlete,
+      day: { $gte: weekStart, $lt: weekEndExcl },
+    }).sort({ day: 1 }).toArray();
+
     if (currentWeekData.length === 0) {
-        return { error: "No athlete data found for the current week." };
+      return { error: "No athlete data found for the current week." };
     }
 
     // Fetch previous week's data from the database
     const prevWeekData = await this.athleteData.find({
-      athleteId: athlete,
-      day: { $gte: atMidnight(prevWeekStart), $lte: atMidnight(prevWeekEnd) }
+      athlete: athlete,
+      day: { $gte: prevWeekStart, $lt: prevWeekEndExcl },
     }).toArray();
 
-     const metricFields: (keyof AthleteData)[] = [
-        "stress", 
-        "sleep", 
-        "restingHeartRate", 
-        "exerciseHeartRate", 
-        "perceivedExertion"
+    const metricFields: (keyof AthleteData)[] = [
+      "stress",
+      "sleep",
+      "restingHeartRate",
+      "exerciseHeartRate",
+      "perceivedExertion",
     ];
 
     const currentMetrics = calculateMetrics(currentWeekData, metricFields);
     const prevMetrics = calculateMetrics(prevWeekData, metricFields);
-    
+
     // Build the weekly summary
     const weeklySummary: WeeklySummary = {
-        athlete: athlete,
-        weekStart: weekStart,
-        mileageSoFar: currentMetrics.totalMileage,
-        athleteDataDailyCollectionForWeek: currentWeekData,
-        averageStress: compareAverages(currentMetrics.averages.stress, prevMetrics.averages.stress),
-        averageSleep: compareAverages(currentMetrics.averages.sleep, prevMetrics.averages.sleep),
-        averageRestingHeartRate: compareAverages(currentMetrics.averages.restingHeartRate, prevMetrics.averages.restingHeartRate),
-        averageExerciseHeartRate: compareAverages(currentMetrics.averages.exerciseHeartRate, prevMetrics.averages.exerciseHeartRate),
-        averagePerceivedExertion: compareAverages(currentMetrics.averages.perceivedExertion, prevMetrics.averages.perceivedExertion),
+      athlete: athlete,
+      weekStart: weekStart,
+      mileageSoFar: currentMetrics.totalMileage,
+      athleteDataDailyCollectionForWeek: currentWeekData,
+      averageStress: compareAverages(
+        currentMetrics.averages.stress,
+        prevMetrics.averages.stress,
+      ),
+      averageSleep: compareAverages(
+        currentMetrics.averages.sleep,
+        prevMetrics.averages.sleep,
+      ),
+      averageRestingHeartRate: compareAverages(
+        currentMetrics.averages.restingHeartRate,
+        prevMetrics.averages.restingHeartRate,
+      ),
+      averageExerciseHeartRate: compareAverages(
+        currentMetrics.averages.exerciseHeartRate,
+        prevMetrics.averages.exerciseHeartRate,
+      ),
+      averagePerceivedExertion: compareAverages(
+        currentMetrics.averages.perceivedExertion,
+        prevMetrics.averages.perceivedExertion,
+      ),
     };
 
     try {
-        await this.weeklyRecords.updateOne(
-            { athleteId: athlete, weekStart: weekStart },
-            { $set: weeklySummary },
-            { upsert: true }
-        );
+      await this.weeklyRecords.updateOne(
+        { athlete: athlete, weekStart: weekStart },
+        { $set: weeklySummary },
+        { upsert: true },
+      );
     } catch (e) {
-        console.error("Database error creating weekly summary:", e);
-        return { error: "Failed to store weekly summary due to a database error." };
+      console.error("Database error creating weekly summary:", e);
+      return {
+        error: "Failed to store weekly summary due to a database error.",
+      };
     }
 
     // Return the generated object

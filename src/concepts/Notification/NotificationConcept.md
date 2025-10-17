@@ -2,7 +2,7 @@
 
     concept Notifications:
         purpose: Deliver updates and reminders about events, logs, or team activity.
-        principle: when key events occur, notifications are generated and queued; recipients are then sent a message at the scheduled time according to their repetition rules
+        principle: A sender creates a notification with certain events, then they add an event to the notification if they want, and then they send the notification!
 
         state:
             a set of Notifications with:

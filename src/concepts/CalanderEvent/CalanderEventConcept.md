@@ -2,7 +2,7 @@
 
     concept CalendarEvent:
         purpose: Post and update team events (practices, meets, deadlines).
-        principle: When a coach posts or updates an event, all team athletes can view it.
+        principle: A user will create a calander event which they can later edit, duplicate or delete. Additionally, in a calander that will could be displayed all of the events will be selected per day.
 
         state:
             a set of Events with:

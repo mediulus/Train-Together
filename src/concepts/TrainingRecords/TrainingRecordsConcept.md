@@ -1,4 +1,4 @@
-    concept TrainingRecords [User]:
+  concept TrainingRecords [User]:
 
   purpose: Record athlete data and ultimately provide a weekly summary dashboard for each athlete. This dashboard displays trends from previous weeks, helping to identify issues or concerns in their training over time.
 
