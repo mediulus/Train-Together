@@ -1,7 +1,7 @@
 import { Collection, Db } from "npm:mongodb";
 import { ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
-import { User } from "../UserDirectory/UserDirectoryConcept.ts";
+import { User, UserID } from "../UserDirectory/UserDirectoryConcept.ts";
 
 export interface AthleteData {
   id: ID;
@@ -56,7 +56,7 @@ function nextSunday(startSunday: Date): Date {
 
 export function calculateMetrics(
   data: AthleteData[],
-  fields: (keyof AthleteData)[],
+  fields: (keyof AthleteData)[]
 ): { totalMileage: number; averages: Record<string, number | null> } {
   let totalMileage = 0;
   const sums: Record<string, number> = {};
@@ -82,9 +82,10 @@ export function calculateMetrics(
 
   const averages: Record<string, number | null> = {};
   for (const field of fields) {
-    averages[field as string] = counts[field as string] > 0
-      ? sums[field as string] / counts[field as string]
-      : null;
+    averages[field as string] =
+      counts[field as string] > 0
+        ? sums[field as string] / counts[field as string]
+        : null;
   }
 
   return { totalMileage, averages };
@@ -92,15 +93,17 @@ export function calculateMetrics(
 
 export function compareAverages(
   currentAvg: number | null,
-  prevAvg: number | null,
+  prevAvg: number | null
 ): ComparisonMetrics {
   if (currentAvg === null && prevAvg === null) {
     return { averageActivityMetric: null, trendDirection: "flat" };
   }
-  if (currentAvg === null) { // Prev exists, current doesn't
+  if (currentAvg === null) {
+    // Prev exists, current doesn't
     return { averageActivityMetric: null, trendDirection: "down" };
   }
-  if (prevAvg === null) { // Current exists, prev doesn't
+  if (prevAvg === null) {
+    // Current exists, prev doesn't
     return { averageActivityMetric: currentAvg, trendDirection: "up" };
   }
 
@@ -110,11 +113,8 @@ export function compareAverages(
 
   const diff = currentAvg - prevAvg;
 
-  const trend: "up" | "down" | "flat" = Math.abs(diff) < tolerance
-    ? "flat"
-    : diff > 0
-    ? "up"
-    : "down";
+  const trend: "up" | "down" | "flat" =
+    Math.abs(diff) < tolerance ? "flat" : diff > 0 ? "up" : "down";
 
   return { averageActivityMetric: currentAvg, trendDirection: trend };
 }
@@ -122,12 +122,18 @@ export function compareAverages(
 export default class TrainingRecordsConcept {
   private weeklyRecords: Collection<WeeklySummary>;
   private athleteData: Collection<AthleteData>;
+  private users: Collection<User>;
 
-  constructor(
-    private readonly db: Db,
-  ) {
+  constructor(private readonly db: Db) {
     this.weeklyRecords = db.collection<WeeklySummary>(PREFIX + "weeklyRecords");
     this.athleteData = db.collection<AthleteData>(PREFIX + "athleteData");
+    this.users = db.collection<User>("UserDirectory.users");
+
+    // Helpful indexes
+    void this.athleteData.createIndex(
+      { "athlete._id": 1, day: 1 },
+      { unique: true }
+    );
   }
 
   /**
@@ -143,7 +149,7 @@ export default class TrainingRecordsConcept {
   async logData(
     date: Date,
     athlete: User,
-    logValues: Partial<Omit<AthleteData, "athlete" | "day">>,
+    logValues: Partial<Omit<AthleteData, "athlete" | "day">>
   ): Promise<AthleteData | { error: string }> {
     //validate all log values are valid keys
     const validKeys: (keyof Omit<AthleteData, "athlete" | "day">)[] = [
@@ -166,7 +172,7 @@ export default class TrainingRecordsConcept {
     const day = atMidnight(date);
     // Check if an entry already exists for this athlete and day
     const existingEntry = await this.athleteData.findOne({
-      athlete: athlete,
+      "athlete._id": athlete._id,
       day: day,
     });
 
@@ -175,7 +181,7 @@ export default class TrainingRecordsConcept {
       const updatedEntry = { ...existingEntry, ...logValues };
       await this.athleteData.updateOne(
         { _id: existingEntry._id },
-        { $set: updatedEntry },
+        { $set: updatedEntry }
       );
       return updatedEntry;
     } else {
@@ -188,6 +194,101 @@ export default class TrainingRecordsConcept {
       };
       await this.athleteData.insertOne(newEntry);
       return newEntry;
+    }
+  }
+
+  /**
+   * HTTP-friendly wrapper: log an entry for a user by ID
+   * Expects body: { userId: string, date: string|Date, mileage?, stress?, sleep?, restingHeartRate?, exerciseHeartRate?, perceivedExertion?, notes? }
+   */
+  async logDailyEntry(input: {
+    userId?: UserID;
+    date?: string | Date;
+    mileage?: number;
+    stress?: number;
+    sleep?: number;
+    restingHeartRate?: number;
+    exerciseHeartRate?: number;
+    perceivedExertion?: number;
+    notes?: string;
+  }): Promise<AthleteData | { error: string }> {
+    try {
+      const userId = input?.userId as UserID | undefined;
+      const date = input?.date ? new Date(input.date) : undefined;
+      if (!userId) return { error: "Missing userId." };
+      if (!date || isNaN(date.getTime()))
+        return { error: "Invalid or missing date." };
+      const athlete = await this.users.findOne({ _id: userId as UserID });
+      if (!athlete) return { error: "User not found." };
+
+      const {
+        mileage,
+        stress,
+        sleep,
+        restingHeartRate,
+        exerciseHeartRate,
+        perceivedExertion,
+        notes,
+      } = input;
+      const values: Partial<Omit<AthleteData, "athlete" | "day">> = {
+        ...(mileage !== undefined ? { mileage } : {}),
+        ...(stress !== undefined ? { stress } : {}),
+        ...(sleep !== undefined ? { sleep } : {}),
+        ...(restingHeartRate !== undefined ? { restingHeartRate } : {}),
+        ...(exerciseHeartRate !== undefined ? { exerciseHeartRate } : {}),
+        ...(perceivedExertion !== undefined ? { perceivedExertion } : {}),
+        ...(notes !== undefined ? { notes } : {}),
+      };
+      return await this.logData(date, athlete, values);
+    } catch (e) {
+      console.error("logDailyEntry failed:", e);
+      return { error: "Failed to log entry." };
+    }
+  }
+
+  /**
+   * HTTP-friendly: list entries for a user, optional date range
+   * Expects body: { userId: string, from?: string|Date, to?: string|Date }
+   */
+  async listEntries(input: {
+    userId?: UserID;
+    from?: string | Date;
+    to?: string | Date;
+  }): Promise<{ entries: AthleteData[] } | { error: string }> {
+    try {
+      const userId = input?.userId as UserID | undefined;
+      if (!userId) return { error: "Missing userId." };
+      const athlete = await this.users.findOne({ _id: userId });
+      if (!athlete) return { error: "User not found." };
+
+      const base: Record<string, unknown> = { "athlete._id": userId };
+      const query: {
+        [key: string]: unknown;
+        day?: { $gte?: Date; $lt?: Date };
+      } = base;
+      const range: Record<string, Date> = {} as Record<string, Date>;
+      if (input?.from) {
+        const d = new Date(input.from);
+        if (!isNaN(d.getTime())) range.$gte = atMidnight(d);
+      }
+      if (input?.to) {
+        const d = new Date(input.to);
+        if (!isNaN(d.getTime())) {
+          const nd = atMidnight(d);
+          nd.setDate(nd.getDate() + 1); // exclusive end
+          range.$lt = nd;
+        }
+      }
+      if (Object.keys(range).length) query.day = range;
+
+      const entries = await this.athleteData
+        .find(query)
+        .sort({ day: 1 })
+        .toArray();
+      return { entries };
+    } catch (e) {
+      console.error("listEntries failed:", e);
+      return { error: "Failed to list entries." };
     }
   }
 
@@ -209,7 +310,7 @@ export default class TrainingRecordsConcept {
    */
   async createWeeklySummary(
     athlete: User,
-    todaysDate: Date,
+    todaysDate: Date
   ): Promise<WeeklySummary | { error: string }> {
     //find the week range (sunday-saturday) for todaysDate
     const weekStart = sundayOf(todaysDate); // inclusive
@@ -219,20 +320,25 @@ export default class TrainingRecordsConcept {
     const prevWeekEndExcl = weekStart;
 
     // Fetch current week's data from the database
-    const currentWeekData = await this.athleteData.find({
-      athlete: athlete,
-      day: { $gte: weekStart, $lt: weekEndExcl },
-    }).sort({ day: 1 }).toArray();
+    const currentWeekData = await this.athleteData
+      .find({
+        athlete: athlete,
+        day: { $gte: weekStart, $lt: weekEndExcl },
+      })
+      .sort({ day: 1 })
+      .toArray();
 
     if (currentWeekData.length === 0) {
       return { error: "No athlete data found for the current week." };
     }
 
     // Fetch previous week's data from the database
-    const prevWeekData = await this.athleteData.find({
-      athlete: athlete,
-      day: { $gte: prevWeekStart, $lt: prevWeekEndExcl },
-    }).toArray();
+    const prevWeekData = await this.athleteData
+      .find({
+        athlete: athlete,
+        day: { $gte: prevWeekStart, $lt: prevWeekEndExcl },
+      })
+      .toArray();
 
     const metricFields: (keyof AthleteData)[] = [
       "stress",
@@ -253,23 +359,23 @@ export default class TrainingRecordsConcept {
       athleteDataDailyCollectionForWeek: currentWeekData,
       averageStress: compareAverages(
         currentMetrics.averages.stress,
-        prevMetrics.averages.stress,
+        prevMetrics.averages.stress
       ),
       averageSleep: compareAverages(
         currentMetrics.averages.sleep,
-        prevMetrics.averages.sleep,
+        prevMetrics.averages.sleep
       ),
       averageRestingHeartRate: compareAverages(
         currentMetrics.averages.restingHeartRate,
-        prevMetrics.averages.restingHeartRate,
+        prevMetrics.averages.restingHeartRate
       ),
       averageExerciseHeartRate: compareAverages(
         currentMetrics.averages.exerciseHeartRate,
-        prevMetrics.averages.exerciseHeartRate,
+        prevMetrics.averages.exerciseHeartRate
       ),
       averagePerceivedExertion: compareAverages(
         currentMetrics.averages.perceivedExertion,
-        prevMetrics.averages.perceivedExertion,
+        prevMetrics.averages.perceivedExertion
       ),
     };
 
@@ -277,7 +383,7 @@ export default class TrainingRecordsConcept {
       await this.weeklyRecords.updateOne(
         { athlete: athlete, weekStart: weekStart },
         { $set: weeklySummary },
-        { upsert: true },
+        { upsert: true }
       );
     } catch (e) {
       console.error("Database error creating weekly summary:", e);
