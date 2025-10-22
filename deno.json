@@ -5,7 +5,13 @@
         "@test-concepts": "./src/concepts/test_concepts.ts",
         "@utils/": "./src/utils/",
         "@engine": "./src/engine/mod.ts",
-        "@syncs": "./src/syncs/syncs.ts"
+        "@syncs": "./src/syncs/syncs.ts",
+        "hono": "jsr:@hono/hono@^4.6.10",
+    "hono/cors": "jsr:@hono/hono@^4.6.10/cors",
+    "@std/fs": "jsr:@std/fs@^1.0.6",
+    "@std/cli/parse-args": "jsr:@std/cli@^1.0.6/parse-args",
+    "@std/path/to-file-url": "jsr:@std/path@^1.0.6/to-file-url",
+    "google-auth-library": "npm:google-auth-library@^9.14.1"
     },
     "tasks": {
         "start": "deno run --allow-net --allow-write --allow-read --allow-sys --allow-env src/main.ts",
