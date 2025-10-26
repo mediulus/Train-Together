@@ -80,7 +80,7 @@ async function main() {
       origin: (origin: string, _c: Context) =>
         origin && ALLOWED_ORIGINS.includes(origin) ? origin : null,
       credentials: true,
-      allowMethods: ["GET", "POST", "OPTIONS"],
+      allowMethods: ["POST", "OPTIONS"],
       allowHeaders: [
         "Content-Type",
         "Authorization",
@@ -92,7 +92,8 @@ async function main() {
     })
   );
 
-  app.get("/", (c: Context) => c.text("Concept Server is running."));
+  // Health endpoint via POST to keep POST-only policy
+  app.post("/", (c: Context) => c.text("Concept Server is running."));
   // Explicit endpoint wired to the concept
 
   app.post(
@@ -129,15 +130,16 @@ async function main() {
     }
   });
 
-  // Fetch a user by ID
-  app.get(`${BASE_URL}/UserDirectory/getUser`, async (c: Context) => {
+  // POST variant for unified POST style
+  app.post(`${BASE_URL}/UserDirectory/getUser`, async (c: Context) => {
     try {
-      const userId = c.req.query("userId");
+      const body = await c.req.json().catch(() => ({}));
+      const { userId } = body || {};
       if (!userId) return c.json({ error: "Missing userId" }, 400);
       const result = await userDirectory.getUser(userId as ID);
       return c.json(result);
     } catch (e) {
-      console.error("Error in explicit UserDirectory.getUser:", e);
+      console.error("Error in explicit UserDirectory.getUser (POST):", e);
       return c.json({ error: "An internal server error occurred." }, 500);
     }
   });
@@ -216,10 +218,11 @@ async function main() {
     }
   });
 
-  // Get team by coach
-  app.get(`${BASE_URL}/TeamMembership/getTeamByCoach`, async (c: Context) => {
+  // POST variant for unified POST style
+  app.post(`${BASE_URL}/TeamMembership/getTeamByCoach`, async (c: Context) => {
     try {
-      const coachId = c.req.query("coachId");
+      const body = await c.req.json().catch(() => ({}));
+      const { coachId } = body || {};
       if (!coachId) return c.json({ error: "Missing coachId" }, 400);
       const coachResult = await userDirectory.getUser(coachId as ID);
       if ("error" in (coachResult as { error?: string }))
@@ -228,39 +231,44 @@ async function main() {
       const result = await teamMembership.getTeamByCoach(coach);
       return c.json(result);
     } catch (e) {
-      console.error("Error in TeamMembership.getTeamByCoach:", e);
+      console.error("Error in TeamMembership.getTeamByCoach (POST):", e);
       return c.json({ error: "An internal server error occurred." }, 500);
     }
   });
 
-  // Get team by athlete
-  app.get(`${BASE_URL}/TeamMembership/getTeamByAthlete`, async (c: Context) => {
-    try {
-      const athleteId = c.req.query("athleteId");
-      if (!athleteId) return c.json({ error: "Missing athleteId" }, 400);
-      const athleteResult = await userDirectory.getUser(athleteId as ID);
-      if ("error" in (athleteResult as { error?: string }))
-        return c.json(athleteResult, 400);
-      const athlete = athleteResult as User;
-      const result = await teamMembership.getTeamByAthlete(athlete);
-      return c.json(result);
-    } catch (e) {
-      console.error("Error in TeamMembership.getTeamByAthlete:", e);
-      return c.json({ error: "An internal server error occurred." }, 500);
+  // POST variant for unified POST style
+  app.post(
+    `${BASE_URL}/TeamMembership/getTeamByAthlete`,
+    async (c: Context) => {
+      try {
+        const body = await c.req.json().catch(() => ({}));
+        const { athleteId } = body || {};
+        if (!athleteId) return c.json({ error: "Missing athleteId" }, 400);
+        const athleteResult = await userDirectory.getUser(athleteId as ID);
+        if ("error" in (athleteResult as { error?: string }))
+          return c.json(athleteResult, 400);
+        const athlete = athleteResult as User;
+        const result = await teamMembership.getTeamByAthlete(athlete);
+        return c.json(result);
+      } catch (e) {
+        console.error("Error in TeamMembership.getTeamByAthlete (POST):", e);
+        return c.json({ error: "An internal server error occurred." }, 500);
+      }
     }
-  });
+  );
 
-  // Get athletes by team
-  app.get(
+  // POST variant for unified POST style
+  app.post(
     `${BASE_URL}/TeamMembership/getAthletesByTeam`,
     async (c: Context) => {
       try {
-        const teamId = c.req.query("teamId");
+        const body = await c.req.json().catch(() => ({}));
+        const { teamId } = body || {};
         if (!teamId) return c.json({ error: "Missing teamId" }, 400);
         const result = await teamMembership.getAthletesByTeam(teamId as ID);
         return c.json(result);
       } catch (e) {
-        console.error("Error in TeamMembership.getAthletesByTeam:", e);
+        console.error("Error in TeamMembership.getAthletesByTeam (POST):", e);
         return c.json({ error: "An internal server error occurred." }, 500);
       }
     }
@@ -376,40 +384,34 @@ async function main() {
     }
   });
 
-  // Get events by specific date (GET)
-  app.get(`${BASE_URL}/CalanderEvent/getEventsByDate`, async (c: Context) => {
-    console.log("Received CalanderEvent.getEventsByDate request");
+  // POST variant for unified POST style
+  app.post(`${BASE_URL}/CalanderEvent/getEventsByDate`, async (c: Context) => {
+    console.log("Received CalanderEvent.getEventsByDate (POST) request");
     try {
-      const dayStr = c.req.query("day");
-      const monthStr = c.req.query("month");
-      const yearStr = c.req.query("year");
-      const teamId = c.req.query("teamId");
-
-      if (!dayStr || !monthStr || !yearStr || !teamId) {
+      const body = await c.req.json().catch(() => ({}));
+      const { day, month, year, teamId } = body || {};
+      if (day == null || month == null || year == null || !teamId) {
         return c.json({ error: "Missing teamId, day, month, or year" }, 400);
       }
-
-      const day = Number(dayStr);
-      const month = Number(monthStr);
-      const year = Number(yearStr);
-
+      const dayNum = Number(day);
+      const monthNum = Number(month);
+      const yearNum = Number(year);
       if (
-        !Number.isInteger(day) ||
-        !Number.isInteger(month) ||
-        !Number.isInteger(year)
+        !Number.isInteger(dayNum) ||
+        !Number.isInteger(monthNum) ||
+        !Number.isInteger(yearNum)
       ) {
         return c.json({ error: "day, month and year must be integers" }, 400);
       }
-
       const result = await calanderEvent.getEventsByDate(
-        day,
-        month,
-        year,
+        dayNum,
+        monthNum,
+        yearNum,
         teamId as ID
       );
       return c.json(result);
     } catch (e) {
-      console.error("Error in CalanderEvent.getEventsByDate:", e);
+      console.error("Error in CalanderEvent.getEventsByDate (POST):", e);
       return c.json({ error: "An internal server error occurred." }, 500);
     }
   });
@@ -428,81 +430,67 @@ async function main() {
     }
   });
 
-  // List entries (GET)
-  app.get(`${BASE_URL}/TrainingRecords/listEntries`, async (c: Context) => {
+  // POST variant for unified POST style
+  app.post(`${BASE_URL}/TrainingRecords/listEntries`, async (c: Context) => {
     try {
-      const userId = c.req.query("userId");
-      const from = c.req.query("from");
-      const to = c.req.query("to");
-
+      const body = await c.req.json().catch(() => ({}));
+      const { userId, from, to } = body || {};
       if (!userId) {
         return c.json({ error: "Missing userId" }, 400);
       }
-
       const result = await trainingRecords.listEntries({
         userId: userId as ID,
         from,
         to,
       });
-      console.log("listEntries result:", result);
       return c.json(result);
     } catch (e) {
-      console.error("Error in TrainingRecords.listEntries:", e);
+      console.error("Error in TrainingRecords.listEntries (POST):", e);
       return c.json({ error: "An internal server error occurred." }, 500);
     }
   });
 
-  // Get weekly summaries for each athlete on the requester's team
-  // GET /TrainingRecords/getTeamWeeklySummaries?userId=...&date=YYYY-MM-DD(optional)
-  app.get(
+  // POST variant for unified POST style
+  app.post(
     `${BASE_URL}/TrainingRecords/getTeamWeeklySummaries`,
     async (c: Context) => {
       try {
         const isError = (v: unknown): v is { error: string } =>
           !!v && typeof v === "object" && "error" in v;
-        const userId = c.req.query("userId");
-        const dateStr = c.req.query("date");
+        const body = await c.req.json().catch(() => ({}));
+        const { userId, date } = body || {};
         if (!userId) return c.json({ error: "Missing userId" }, 400);
 
-        // Resolve requester
         const requesterRes = await userDirectory.getUser(userId as ID);
         if (isError(requesterRes)) return c.json(requesterRes, 400);
         const requester = requesterRes as User;
 
-        // Determine the team for requester (coach preferred, else athlete)
-        const teamOrErr = await teamMembership.getTeamByCoach(requester);
-        let team: Team | { error: string } = teamOrErr as
-          | Team
-          | { error: string };
-        if (isError(team)) {
-          const t2 = await teamMembership.getTeamByAthlete(requester);
-          team = t2 as Team | { error: string };
-        }
-        if (isError(team))
+        let teamOrErr = await teamMembership.getTeamByCoach(requester);
+        if (isError(teamOrErr))
+          teamOrErr = await teamMembership.getTeamByAthlete(requester);
+        if (isError(teamOrErr))
           return c.json({ error: "Requester not associated with a team" }, 400);
 
-        const date = dateStr ? new Date(dateStr) : new Date();
-        console.log(date);
-        if (isNaN(date.getTime()))
+        const when = date ? new Date(date) : new Date();
+        if (isNaN(when.getTime()))
           return c.json({ error: "Invalid date" }, 400);
 
-        const athletes: User[] = (team as Team).athletes || [];
+        const team = teamOrErr as Team;
+        const athletes: User[] = team.athletes || [];
         const summaries: Array<
           WeeklySummary | { error: string; athlete?: User }
         > = [];
         for (const a of athletes) {
-          const s = await trainingRecords.createWeeklySummary(a, date);
-          // attach athlete reference for easier frontend mapping
-          if (isError(s)) {
-            summaries.push({ ...s, athlete: a });
-          } else {
-            summaries.push(s as WeeklySummary);
-          }
+          const s = await trainingRecords.createWeeklySummary(a, when);
+          if (isError(s)) summaries.push({ ...s, athlete: a });
+          else summaries.push(s as WeeklySummary);
         }
-
         return c.json({ summaries });
       } catch (e) {
-        console.error("Error in TrainingRecords.getTeamWeeklySummaries:", e);
+        console.error(
+          "Error in TrainingRecords.getTeamWeeklySummaries (POST):",
+          e
+        );
         return c.json({ error: "An internal server error occurred." }, 500);
       }
     }

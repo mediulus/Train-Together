@@ -152,12 +152,17 @@ export default class UserDirectoryConcept {
    * @returns the user queried for
    */
   async getUser(userId: UserID): Promise<User | { error: string }> {
-    const user = await this.users.findOne({ _id: userId as UserID });
+    const userID = String(userId);
+    console.log(userID);
+    console.log('type of', typeof(userID));
+    console.log(userId);
+    const user = await this.users.findOne({ _id: userID });
     if (!user) {
       return { error: "this user does not exists" };
     }
     return user;
   }
+
   /**
    * Helper function called withing loginWithGoogleIdToken to generate the users profile
    *

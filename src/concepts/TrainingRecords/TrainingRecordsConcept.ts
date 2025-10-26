@@ -307,7 +307,6 @@ export default class TrainingRecordsConcept {
 
       const athlete = await this.users.findOne({ _id: userId });
       if (!athlete) return { error: "User not found." };
-
       // Build the query
       const query: {
         "athlete._id": UserID;

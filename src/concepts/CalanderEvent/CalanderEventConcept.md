@@ -7,6 +7,7 @@
         state:
             a set of Events with:
                 and id ID
+                a teamId ID
                 a startTime DateTime
                 an endTime DateTime
                 a location String
@@ -19,7 +20,7 @@
                 requires: event exists
                 effects: returns the existing event
                 
-            createEvent(startTime: DateTime, endTime: DateTime, location: String, title: String, description?: String, link?: URL) : (event: ID)
+            createEvent(teamId: ID, startTime: DateTime, endTime: DateTime, location: String, title: String, description?: String, link?: URL) : (event: ID)
                 requires: 
                     - startTime < endTime
                 effects: generates a new Event with startTime = startTime, endTime = endTime, location = location, title = title and the optional parameters description = description and link = link
