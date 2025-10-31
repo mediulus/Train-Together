@@ -326,6 +326,55 @@ async function main() {
     }
   });
 
+  // Edit event (POST)
+  app.post(`${BASE_URL}/CalanderEvent/editEvent`, async (c: Context) => {
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const { eventId, updates } = body || {};
+      if (!eventId || !updates || typeof updates !== "object") {
+        return c.json({ error: "Missing eventId or updates" }, 400);
+      }
+
+      // Convert potential date strings to Date objects
+      const u: Record<string, unknown> = { ...updates };
+      if (u.startTime != null) {
+        const d = new Date(u.startTime as string);
+        if (isNaN(d.getTime()))
+          return c.json({ error: "Invalid startTime" }, 400);
+        u.startTime = d;
+      }
+      if (u.endTime != null) {
+        const d = new Date(u.endTime as string);
+        if (isNaN(d.getTime()))
+          return c.json({ error: "Invalid endTime" }, 400);
+        u.endTime = d;
+      }
+
+      const result = await calanderEvent.editEvent(
+        eventId as ID,
+        u as Partial<Omit<Event, "_id">>
+      );
+      return c.json(result);
+    } catch (e) {
+      console.error("Error in CalanderEvent.editEvent:", e);
+      return c.json({ error: "An internal server error occurred." }, 500);
+    }
+  });
+
+  // Delete event (POST)
+  app.post(`${BASE_URL}/CalanderEvent/deleteEvent`, async (c: Context) => {
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const { eventId } = body || {};
+      if (!eventId) return c.json({ error: "Missing eventId" }, 400);
+      const result = await calanderEvent.deleteEvent(eventId as ID);
+      return c.json(result);
+    } catch (e) {
+      console.error("Error in CalanderEvent.deleteEvent:", e);
+      return c.json({ error: "An internal server error occurred." }, 500);
+    }
+  });
+
   // Get events by specific date (GET)
   app.get(`${BASE_URL}/CalanderEvent/getEventsByDate`, async (c: Context) => {
     console.log("Received CalanderEvent.getEventsByDate request");
@@ -401,9 +450,7 @@ async function main() {
   app.get(
     `${BASE_URL}/TrainingRecords/getTeamWeeklySummaries`,
     async (c: Context) => {
-      console.log(
-        "Received TrainingRecords.getTeamWeeklySummaries request"
-      );
+      console.log("Received TrainingRecords.getTeamWeeklySummaries request");
       try {
         const isError = (v: unknown): v is { error: string } =>
           !!v && typeof v === "object" && "error" in v;
