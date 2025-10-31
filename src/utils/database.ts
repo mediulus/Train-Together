@@ -46,7 +46,7 @@ async function dropAllCollections(db: Db): Promise<void> {
  * MongoDB database configured by .env
  * @returns {[Db, MongoClient]} initialized database and client
  */
-export async function getDb() {
+export async function getDb(): Promise<[Db, MongoClient]> {
   const [client, DB_NAME] = await init();
   return [client.db(DB_NAME), client] as [Db, MongoClient];
 }
@@ -55,7 +55,7 @@ export async function getDb() {
  * Test database initialization
  * @returns {[Db, MongoClient]} initialized test database and client
  */
-export async function testDb() {
+export async function testDb(): Promise<[Db, MongoClient]> {
   const [client, DB_NAME] = await init();
   const test_DB_NAME = `test-${DB_NAME}`;
   const test_Db = client.db(test_DB_NAME);

@@ -1,10 +1,10 @@
 import { Collection, Db } from "npm:mongodb";
-import type { OAuth2Client } from "google-auth-library";
 import { google } from "googleapis";
+import type { Auth } from "googleapis";
 import { Empty, ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
-import  { User} from "../UserDirectory/UserDirectoryConcept.ts";
-import {type Event} from "../CalanderEvent/CalanderEventConcept.ts";
+import { User } from "../UserDirectory/UserDirectoryConcept.ts";
+import { type Event } from "../CalanderEvent/CalanderEventConcept.ts";
 
 const PREFIX = "Notifications.";
 
@@ -29,7 +29,35 @@ function base64Url(raw: string): string {
 }
 
 function formatDate(d?: Date) {
-  return d ? d.toISOString() : "";
+  if (!d) return "";
+
+  const months = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  const month = months[d.getMonth()];
+  const day = d.getDate();
+  const year = d.getFullYear();
+  const dayOfWeek = days[d.getDay()];
+
+  let hours = d.getHours();
+  const minutes = d.getMinutes().toString().padStart(2, "0");
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12 || 12;
+
+  return `${dayOfWeek}, ${month} ${day}, ${year} at ${hours}:${minutes} ${ampm}`;
 }
 
 function composeMessage(events: Event[], additionalMessage: string) {
@@ -60,13 +88,14 @@ export default class NotificationsConcept {
 
   constructor(
     private readonly db: Db,
-    private readonly oauth: OAuth2Client, // already configured with gmail.send scope
-    private readonly subject: string = "Team Updates", // minimal, fixed subject,
-    ) {
+    private readonly oauth: Auth.OAuth2Client, // already configured with gmail.send scope
+    private readonly subject: string = "Team Updates" // minimal, fixed subject,
+  ) {
     this.notifications = db.collection<NotificationDoc>(
-      `${PREFIX}notifications`,
+      `${PREFIX}notifications`
     );
-    this.gmail = google.gmail({ version: "v1", auth: oauth });
+    // Initialize Gmail API client without auth to avoid TS overload mismatch; pass auth per request
+    this.gmail = google.gmail({ version: "v1", auth: this.oauth });
   }
 
   /**
@@ -86,10 +115,13 @@ export default class NotificationsConcept {
    * @param scheduledAt
    * @returns
    */
-  async create(sender: User, recipients: User[],events: Event[], 
-              additionalMessage: string,scheduledAt: Date,): 
-                  Promise<{ id?: NotificationID; error?: string }> {
-
+  async create(
+    sender: User,
+    recipients: User[],
+    events: Event[],
+    additionalMessage: string,
+    scheduledAt: Date
+  ): Promise<{ id?: NotificationID; error?: string }> {
     // scheduledAt in future
     if (scheduledAt.getTime() < Date.now()) {
       return { error: "scheduledAt must be in the future." };
@@ -122,9 +154,15 @@ export default class NotificationsConcept {
    *
    * @returns
    */
-  async addEvent(editor: User, event: Event, notification: NotificationID): Promise<Empty | { error: string }> {
+  async addEvent(
+    editor: User,
+    event: Event,
+    notification: NotificationID
+  ): Promise<Empty | { error: string }> {
     //notification exists
-    const notificationObject = await this.notifications.findOne({ _id: notification });
+    const notificationObject = await this.notifications.findOne({
+      _id: notification,
+    });
     if (!notificationObject) return { error: "Notification does not exist." };
 
     //editor is sender
@@ -135,13 +173,13 @@ export default class NotificationsConcept {
     // Preserve the extra message by extracting anything after a blank line (if present
     const parts = notificationObject.messageEmail.split("\n\n");
     const additional = parts.length > 1 ? parts.slice(-1)[0] : "";
-    
+
     const allEvents = [...notificationObject.events, event];
     const newMessage = composeMessage(allEvents, additional);
 
     await this.notifications.updateOne(
       { _id: notification },
-      { $set: { events: allEvents, messageEmail: newMessage } },
+      { $set: { events: allEvents, messageEmail: newMessage } }
     );
 
     return {};
@@ -149,19 +187,20 @@ export default class NotificationsConcept {
 
   /**
    * Sends the notification to the recipients gmails from the coaches gmails
-   * 
+   *
    * @requires notification exists
    *
    * @param sender the id of the user sending the email
    * @param notification the notification id you want to send
    * @returns
    */
-  async send(notification: NotificationID,
-  ): Promise<Empty | { error: string }> {
-    const notificationObject = await this.notifications.findOne({ _id: notification });
+  async send(notification: NotificationID): Promise<Empty | { error: string }> {
+    const notificationObject = await this.notifications.findOne({
+      _id: notification,
+    });
     if (!notificationObject) return { error: "Notification does not exist." };
 
-    const sender  = notificationObject.sender;
+    const sender = notificationObject.sender;
     if (!sender) return { error: "Sender does not exist." };
     const senderGmail = sender.email;
     if (!senderGmail) return { error: "Sender does not have a gmail." };
@@ -173,7 +212,8 @@ export default class NotificationsConcept {
     }
     if (to.length === 0) return { error: "No recipient emails found." };
 
-    const headers = `From: ${senderGmail}\r\n` +
+    const headers =
+      `From: ${senderGmail}\r\n` +
       `To: ${to.join(", ")}\r\n` +
       `Subject: ${this.subject}\r\n` +
       "MIME-Version: 1.0\r\n" +

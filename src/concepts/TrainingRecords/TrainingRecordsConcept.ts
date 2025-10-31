@@ -1,4 +1,4 @@
-import { Collection, Db } from "npm:mongodb";
+import { Collection, Db } from "mongodb";
 import { ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
 import { User, UserID } from "../UserDirectory/UserDirectoryConcept.ts";
@@ -41,6 +41,13 @@ function atMidnight(d: Date): Date {
   x.setHours(0, 0, 0, 0);
   return x;
 }
+
+// Helper to parse a date string (YYYY-MM-DD) in local timezone
+function parseLocalDate(dateStr: string): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day, 0, 0, 0, 0);
+}
+
 function sundayOf(d: Date): Date {
   const x = atMidnight(d);
   const day = x.getDay(); // 0 = Sun
@@ -125,9 +132,9 @@ export default class TrainingRecordsConcept {
   private users: Collection<User>;
 
   constructor(private readonly db: Db) {
-    this.weeklyRecords = db.collection<WeeklySummary>(PREFIX + "weeklyRecords");
-    this.athleteData = db.collection<AthleteData>(PREFIX + "athleteData");
-    this.users = db.collection<User>("UserDirectory.users");
+    this.weeklyRecords = this.db.collection<WeeklySummary>(PREFIX + "weeklyRecords");
+    this.athleteData = this.db.collection<AthleteData>(PREFIX + "athleteData");
+    this.users = this.db.collection<User>("UserDirectory.users");
 
     // Helpful indexes
     void this.athleteData.createIndex(
@@ -169,7 +176,16 @@ export default class TrainingRecordsConcept {
       }
     }
 
+    // Filter out null and undefined values - only update fields with actual values
+    const filteredValues: Record<string, number | string> = {};
+    for (const [key, value] of Object.entries(logValues)) {
+      if (value !== null && value !== undefined) {
+        filteredValues[key] = value as number | string;
+      }
+    }
+
     const day = atMidnight(date);
+
     // Check if an entry already exists for this athlete and day
     const existingEntry = await this.athleteData.findOne({
       "athlete._id": athlete._id,
@@ -177,12 +193,22 @@ export default class TrainingRecordsConcept {
     });
 
     if (existingEntry) {
-      // Update the existing entry with new log values
-      const updatedEntry = { ...existingEntry, ...logValues };
-      await this.athleteData.updateOne(
-        { _id: existingEntry._id },
-        { $set: updatedEntry }
-      );
+      // Only update if there are values to set
+      if (Object.keys(filteredValues).length > 0) {
+       
+        await this.athleteData.updateOne(
+          { _id: existingEntry._id },
+          { $set: filteredValues }
+        );
+      } else {
+        console.log("No values to update for existing entry on:", day);
+      }
+      
+      // Fetch and return the updated entry from database
+      const updatedEntry = await this.athleteData.findOne({ _id: existingEntry._id });
+      if (!updatedEntry) {
+        return { error: "Failed to retrieve updated entry." };
+      }
       return updatedEntry;
     } else {
       // Create a new entry
@@ -190,10 +216,20 @@ export default class TrainingRecordsConcept {
         id: freshID(),
         athlete: athlete,
         day: day,
-        ...logValues,
+        ...filteredValues,
       };
       await this.athleteData.insertOne(newEntry);
-      return newEntry;
+      
+      // Fetch and return the newly created entry from database
+      const createdEntry = await this.athleteData.findOne({
+        "athlete._id": athlete._id,
+        day: day,
+      });
+      if (!createdEntry) {
+        return { error: "Failed to retrieve created entry." };
+      }
+      console.log("Created entry:", createdEntry);
+      return createdEntry;
     }
   }
 
@@ -213,33 +249,30 @@ export default class TrainingRecordsConcept {
     notes?: string;
   }): Promise<AthleteData | { error: string }> {
     try {
-      const userId = input?.userId as UserID | undefined;
-      const date = input?.date ? new Date(input.date) : undefined;
+
+      const userId = input.userId;
       if (!userId) return { error: "Missing userId." };
+      
+      // Parse date properly - if it's a string in YYYY-MM-DD format, use parseLocalDate
+      let date: Date | undefined;
+      if (input.date) {
+        if (typeof input.date === 'string') {
+          date = parseLocalDate(input.date);
+        } else {
+          date = new Date(input.date);
+        }
+      }
+
       if (!date || isNaN(date.getTime()))
         return { error: "Invalid or missing date." };
-      const athlete = await this.users.findOne({ _id: userId as UserID });
+
+      const athlete = await this.users.findOne({ _id: userId });
       if (!athlete) return { error: "User not found." };
 
-      const {
-        mileage,
-        stress,
-        sleep,
-        restingHeartRate,
-        exerciseHeartRate,
-        perceivedExertion,
-        notes,
-      } = input;
-      const values: Partial<Omit<AthleteData, "athlete" | "day">> = {
-        ...(mileage !== undefined ? { mileage } : {}),
-        ...(stress !== undefined ? { stress } : {}),
-        ...(sleep !== undefined ? { sleep } : {}),
-        ...(restingHeartRate !== undefined ? { restingHeartRate } : {}),
-        ...(exerciseHeartRate !== undefined ? { exerciseHeartRate } : {}),
-        ...(perceivedExertion !== undefined ? { perceivedExertion } : {}),
-        ...(notes !== undefined ? { notes } : {}),
-      };
-      return await this.logData(date, athlete, values);
+      // Extract all the log values (everything except userId and date)
+      const { userId: _, date: __, ...logValues } = input;
+
+      return await this.logData(date, athlete, logValues);
     } catch (e) {
       console.error("logDailyEntry failed:", e);
       return { error: "Failed to log entry." };
@@ -248,7 +281,7 @@ export default class TrainingRecordsConcept {
 
   /**
    * HTTP-friendly: list entries for a user, optional date range
-   * Expects body: { userId: string, from?: string|Date, to?: string|Date }
+   * Expects input: { userId: string, from?: string|Date, to?: string|Date }
    */
   async listEntries(input: {
     userId?: UserID;
@@ -256,35 +289,47 @@ export default class TrainingRecordsConcept {
     to?: string | Date;
   }): Promise<{ entries: AthleteData[] } | { error: string }> {
     try {
-      const userId = input?.userId as UserID | undefined;
+      
+      const userId = input.userId;
       if (!userId) return { error: "Missing userId." };
+      
       const athlete = await this.users.findOne({ _id: userId });
       if (!athlete) return { error: "User not found." };
 
-      const base: Record<string, unknown> = { "athlete._id": userId };
+      // Build the query
       const query: {
-        [key: string]: unknown;
+        "athlete._id": UserID;
         day?: { $gte?: Date; $lt?: Date };
-      } = base;
-      const range: Record<string, Date> = {} as Record<string, Date>;
-      if (input?.from) {
-        const d = new Date(input.from);
-        if (!isNaN(d.getTime())) range.$gte = atMidnight(d);
-      }
-      if (input?.to) {
-        const d = new Date(input.to);
-        if (!isNaN(d.getTime())) {
-          const nd = atMidnight(d);
-          nd.setDate(nd.getDate() + 1); // exclusive end
-          range.$lt = nd;
+      } = { "athlete._id": userId };
+      
+      // Add date range if provided
+      if (input.from || input.to) {
+        query.day = {};
+        
+        if (input.from) {
+          const fromDate = new Date(input.from);
+          if (!isNaN(fromDate.getTime())) {
+            query.day.$gte = atMidnight(fromDate);
+          }
+        }
+        
+        if (input.to) {
+          const toDate = new Date(input.to);
+          if (!isNaN(toDate.getTime())) {
+            const exclusiveEnd = atMidnight(toDate);
+            exclusiveEnd.setDate(exclusiveEnd.getDate() + 1);
+            query.day.$lt = exclusiveEnd;
+          }
         }
       }
-      if (Object.keys(range).length) query.day = range;
 
+      
       const entries = await this.athleteData
         .find(query)
         .sort({ day: 1 })
         .toArray();
+
+      console.log('these are the listed entries:', entries);
       return { entries };
     } catch (e) {
       console.error("listEntries failed:", e);

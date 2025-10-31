@@ -1,7 +1,7 @@
-import { Collection, Db } from "npm:mongodb";
+import { Collection, Db } from "mongodb";
 import { Empty, ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
-import { OAuth2Client } from "google-auth-library";
+import { createRemoteJWKSet, jwtVerify, JWTPayload } from "jose";
 
 const PREFIX = "UserDirectory" + ".";
 
@@ -51,13 +51,9 @@ export interface User {
  */
 export default class UserDirectoryConcept {
   users: Collection<User>;
-  private oauth?: OAuth2Client;
-  private googleClientId?: string;
+  // Firebase-only verification; no Google OAuth client needed
 
-  constructor(
-    private readonly db: Db,
-    opts?: { oauthClient?: OAuth2Client; googleClientId?: string }
-  ) {
+  constructor(private readonly db: Db, _opts?: unknown) {
     this.users = this.db.collection<User>(PREFIX + "users");
 
     void this.users.createIndex({ email: 1 }, { unique: true });
@@ -69,13 +65,7 @@ export default class UserDirectoryConcept {
       }
     );
 
-    // Google verification wiring
-    this.oauth =
-      opts?.oauthClient ??
-      (opts?.googleClientId
-        ? new OAuth2Client(opts.googleClientId)
-        : undefined);
-    this.googleClientId = opts?.googleClientId;
+    // No google-auth-library; we only verify Firebase ID tokens via JWKS
   }
 
   /**
@@ -107,33 +97,51 @@ export default class UserDirectoryConcept {
     | { userId: UserID; needsName: boolean; needsRole: boolean }
     | { error: string }
   > {
+    console.log("inside loginWithGoogleIdToken");
     const idToken = typeof input === "string" ? input : input?.idToken;
-    if (!idToken) return { error: "Missing idToken." };
-    if (!this.oauth || !this.googleClientId) {
-      return {
-        error:
-          "Google verification is not configured (oauth clientId missing).",
-      };
+    if (!idToken) {
+      console.log("Missing idToken.");
+      return { error: "Missing idToken." };
     }
 
-    // 1) Verify ID token with Google
-    const ticket = await this.oauth.verifyIdToken({
-      idToken,
-      audience: this.googleClientId,
-    });
-    const payload = ticket.getPayload();
-    if (!payload) return { error: "Invalid Google token." };
+    // Verify Firebase ID token only (no Google OIDC fallback)
+    const firebaseProjectId = Deno.env.get("FIREBASE_PROJECT_ID");
+    if (!firebaseProjectId) {
+      console.log("Server missing FIREBASE_PROJECT_ID env var.");
+      return { error: "Server missing FIREBASE_PROJECT_ID env var." };
+    }
+    try {
+      const JWKS = createRemoteJWKSet(
+        new URL(
+          "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+        )
+      );
+      const { payload } = await jwtVerify(idToken, JWKS, {
+        issuer: `https://securetoken.google.com/${firebaseProjectId}`,
+        audience: firebaseProjectId,
+      });
 
-    // 2) Build the profile expected by the concept
-    const profile: GoogleProfile = {
-      sub: payload.sub!,
-      email: this.normalizeEmail(payload.email || ""),
-      emailVerified: Boolean(payload.email_verified),
-      name: payload.name,
-    };
-
-    // 3) Delegate to the existing upsert flow
-    return this.loginWithGoogle(profile);
+      const email = (payload as JWTPayload & { email?: string }).email || "";
+      const emailVerified = Boolean(
+        (payload as JWTPayload & { email_verified?: boolean }).email_verified
+      );
+      const name = (payload as JWTPayload & { name?: string }).name;
+      const sub = payload.sub as string | undefined;
+      if (!sub) {
+        console.log("Invalid Firebase token (no sub).");
+        return { error: "Invalid Firebase token (no sub)." };
+      }
+      const profile: GoogleProfile = {
+        sub,
+        email: this.normalizeEmail(email),
+        emailVerified,
+        name,
+      };
+      return this.loginWithGoogle(profile);
+    } catch (_e) {
+      console.log("Firebase ID token verification failed:");
+      return { error: "Invalid Firebase ID token." };
+    }
   }
 
   /**
@@ -165,6 +173,7 @@ export default class UserDirectoryConcept {
     | { userId: UserID; needsName: boolean; needsRole: boolean }
     | { error: string }
   > {
+    console.log("inside loginWithGoogle");
     if (!profile?.sub) return { error: "Missing Google subject (sub)." };
     if (!profile?.email) return { error: "Missing Google email." };
     if (profile.emailVerified !== true)
@@ -281,14 +290,23 @@ export default class UserDirectoryConcept {
    */
   async setRole(
     userId: UserID,
-    role: Role
+    role: string
   ): Promise<Empty | { error: string }> {
-    if (role !== "athlete" && role !== "coach") {
-      return { error: "Invalid role." };
+    // Ensure user exists first
+    console.log("Setting role for userId:", userId, "to role:", role);
+    const existing = await this.users.findOne({ _id: userId as UserID });
+    if (!existing) {
+      return { error: "User not found." };
     }
 
-    const res = await this.users.updateOne({ _id: userId }, { $set: { role } });
-
+    const r = (role || "").toLowerCase();
+    if (r !== "athlete" && r !== "coach") {
+      return { error: "Invalid role." };
+    }
+    const res = await this.users.updateOne(
+      { _id: userId },
+      { $set: { role: r as Role } }
+    );
     if (res.matchedCount === 0) return { error: "User not found." };
     return {};
   }
@@ -333,10 +351,12 @@ export default class UserDirectoryConcept {
     const user = await this.users.findOne({ _id: user_id as UserID });
 
     if (!user) {
+      console.log("User not found for ID:", user_id);
       return { error: "User not found." };
     }
 
     if (user.role !== Role.Athlete) {
+      console.log("User role is not athlete:", user.role);
       return { error: "Only athletes can have weekly mileage set." };
     }
 
