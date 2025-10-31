@@ -450,14 +450,13 @@ async function main() {
   app.get(
     `${BASE_URL}/TrainingRecords/getTeamWeeklySummaries`,
     async (c: Context) => {
-      console.log("Received TrainingRecords.getTeamWeeklySummaries request");
       try {
         const isError = (v: unknown): v is { error: string } =>
           !!v && typeof v === "object" && "error" in v;
         const userId = c.req.query("userId");
         const dateStr = c.req.query("date");
         if (!userId) return c.json({ error: "Missing userId" }, 400);
-
+        
         // Resolve requester
         const requesterRes = await userDirectory.getUser(userId as ID);
         if (isError(requesterRes)) return c.json(requesterRes, 400);
@@ -476,6 +475,7 @@ async function main() {
           return c.json({ error: "Requester not associated with a team" }, 400);
 
         const date = dateStr ? new Date(dateStr) : new Date();
+        console.log(date);
         if (isNaN(date.getTime()))
           return c.json({ error: "Invalid date" }, 400);
 

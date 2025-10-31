@@ -1,5 +1,7 @@
 # 6.104 Assignment 4: Implementing Concepts
 
+[Design Updates](./DesignUpdates.md)
+
 All of my concepts have been broken down into files that contain 4 items:
 1. The concept implementation
 2. The concept spec markdown file 

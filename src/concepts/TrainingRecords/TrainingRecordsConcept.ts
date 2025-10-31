@@ -1,7 +1,10 @@
 import { Collection, Db } from "mongodb";
 import { ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
-import { User, UserID } from "../UserDirectory/UserDirectoryConcept.ts";
+import UserDirectoryConcept, {
+  User,
+  UserID,
+} from "../UserDirectory/UserDirectoryConcept.ts";
 
 export interface AthleteData {
   id: ID;
@@ -44,8 +47,16 @@ function atMidnight(d: Date): Date {
 
 // Helper to parse a date string (YYYY-MM-DD) in local timezone
 function parseLocalDate(dateStr: string): Date {
-  const [year, month, day] = dateStr.split('-').map(Number);
+  const [year, month, day] = dateStr.split("-").map(Number);
   return new Date(year, month - 1, day, 0, 0, 0, 0);
+}
+
+// Format a Date as local YYYY-MM-DD
+function toLocalYMD(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 function sundayOf(d: Date): Date {
@@ -132,7 +143,9 @@ export default class TrainingRecordsConcept {
   private users: Collection<User>;
 
   constructor(private readonly db: Db) {
-    this.weeklyRecords = this.db.collection<WeeklySummary>(PREFIX + "weeklyRecords");
+    this.weeklyRecords = this.db.collection<WeeklySummary>(
+      PREFIX + "weeklyRecords"
+    );
     this.athleteData = this.db.collection<AthleteData>(PREFIX + "athleteData");
     this.users = this.db.collection<User>("UserDirectory.users");
 
@@ -195,7 +208,6 @@ export default class TrainingRecordsConcept {
     if (existingEntry) {
       // Only update if there are values to set
       if (Object.keys(filteredValues).length > 0) {
-       
         await this.athleteData.updateOne(
           { _id: existingEntry._id },
           { $set: filteredValues }
@@ -203,9 +215,11 @@ export default class TrainingRecordsConcept {
       } else {
         console.log("No values to update for existing entry on:", day);
       }
-      
+
       // Fetch and return the updated entry from database
-      const updatedEntry = await this.athleteData.findOne({ _id: existingEntry._id });
+      const updatedEntry = await this.athleteData.findOne({
+        _id: existingEntry._id,
+      });
       if (!updatedEntry) {
         return { error: "Failed to retrieve updated entry." };
       }
@@ -219,7 +233,7 @@ export default class TrainingRecordsConcept {
         ...filteredValues,
       };
       await this.athleteData.insertOne(newEntry);
-      
+
       // Fetch and return the newly created entry from database
       const createdEntry = await this.athleteData.findOne({
         "athlete._id": athlete._id,
@@ -249,14 +263,13 @@ export default class TrainingRecordsConcept {
     notes?: string;
   }): Promise<AthleteData | { error: string }> {
     try {
-
       const userId = input.userId;
       if (!userId) return { error: "Missing userId." };
-      
+
       // Parse date properly - if it's a string in YYYY-MM-DD format, use parseLocalDate
       let date: Date | undefined;
       if (input.date) {
-        if (typeof input.date === 'string') {
+        if (typeof input.date === "string") {
           date = parseLocalDate(input.date);
         } else {
           date = new Date(input.date);
@@ -289,10 +302,9 @@ export default class TrainingRecordsConcept {
     to?: string | Date;
   }): Promise<{ entries: AthleteData[] } | { error: string }> {
     try {
-      
       const userId = input.userId;
       if (!userId) return { error: "Missing userId." };
-      
+
       const athlete = await this.users.findOne({ _id: userId });
       if (!athlete) return { error: "User not found." };
 
@@ -301,18 +313,18 @@ export default class TrainingRecordsConcept {
         "athlete._id": UserID;
         day?: { $gte?: Date; $lt?: Date };
       } = { "athlete._id": userId };
-      
+
       // Add date range if provided
       if (input.from || input.to) {
         query.day = {};
-        
+
         if (input.from) {
           const fromDate = new Date(input.from);
           if (!isNaN(fromDate.getTime())) {
             query.day.$gte = atMidnight(fromDate);
           }
         }
-        
+
         if (input.to) {
           const toDate = new Date(input.to);
           if (!isNaN(toDate.getTime())) {
@@ -323,13 +335,12 @@ export default class TrainingRecordsConcept {
         }
       }
 
-      
       const entries = await this.athleteData
         .find(query)
         .sort({ day: 1 })
         .toArray();
 
-      console.log('these are the listed entries:', entries);
+      console.log("these are the listed entries:", entries);
       return { entries };
     } catch (e) {
       console.error("listEntries failed:", e);
@@ -358,20 +369,34 @@ export default class TrainingRecordsConcept {
     todaysDate: Date
   ): Promise<WeeklySummary | { error: string }> {
     //find the week range (sunday-saturday) for todaysDate
-    const weekStart = sundayOf(todaysDate); // inclusive
+    console.log(athlete.name);
+    // Normalize todaysDate to local midnight to avoid TZ drift
+    const todayLocal = parseLocalDate(toLocalYMD(todaysDate));
+    const weekStart = sundayOf(todayLocal); // inclusive
     const weekEndExcl = nextSunday(weekStart);
     const prevWeekStart = new Date(weekStart);
     prevWeekStart.setDate(prevWeekStart.getDate() - 7);
     const prevWeekEndExcl = weekStart;
 
+    const athleteId = String(athlete._id);
+    console.log(
+      "createWeeklySummary athleteId:",
+      athleteId,
+      "week:",
+      weekStart,
+      "..",
+      weekEndExcl
+    );
+
     // Fetch current week's data from the database
     const currentWeekData = await this.athleteData
       .find({
-        athlete: athlete,
+        "athlete._id": { $in: [athlete._id as unknown as string, athleteId] },
         day: { $gte: weekStart, $lt: weekEndExcl },
       })
       .sort({ day: 1 })
       .toArray();
+    console.log("Current week data:", currentWeekData);
 
     if (currentWeekData.length === 0) {
       return { error: "No athlete data found for the current week." };
@@ -380,7 +405,7 @@ export default class TrainingRecordsConcept {
     // Fetch previous week's data from the database
     const prevWeekData = await this.athleteData
       .find({
-        athlete: athlete,
+        "athlete._id": { $in: [athlete._id as unknown as string, athleteId] },
         day: { $gte: prevWeekStart, $lt: prevWeekEndExcl },
       })
       .toArray();
@@ -426,7 +451,10 @@ export default class TrainingRecordsConcept {
 
     try {
       await this.weeklyRecords.updateOne(
-        { athlete: athlete, weekStart: weekStart },
+        {
+          "athlete._id": { $in: [athlete._id as unknown as string, athleteId] },
+          weekStart: weekStart,
+        },
         { $set: weeklySummary },
         { upsert: true }
       );
