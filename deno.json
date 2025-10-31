@@ -7,9 +7,13 @@
     "@std/fs": "jsr:@std/fs@^1.0.6",
     "@std/cli/parse-args": "jsr:@std/cli@^1.0.6/parse-args",
     "@std/path/to-file-url": "jsr:@std/path@^1.0.6/to-file-url",
-    "google-auth-library": "npm:google-auth-library@^9.14.1"
+  "google-auth-library": "npm:google-auth-library@^10.4.0",
+  "googleapis": "npm:googleapis@^162.0.0",
+  "mongodb": "npm:mongodb@^6.10.0",
+    "jose": "npm:jose@^5.9.3"
   },
+  "nodeModulesDir": "auto",
   "tasks": {
-    "concepts": "deno run --allow-net --allow-read --allow-sys --allow-env src/concept_server.ts --port 8000 --baseUrl /api"
+    "concepts": "deno run --allow-net --allow-read --allow-sys --allow-env --env-file=.env src/concept_server.ts --port 8000 --baseUrl /api"
   }
 }

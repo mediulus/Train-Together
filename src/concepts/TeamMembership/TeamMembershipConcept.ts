@@ -1,4 +1,4 @@
-import { Collection, Db } from "npm:mongodb";
+import { Collection, Db } from "mongodb";
 import { Empty, ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
 import { User } from "../UserDirectory/UserDirectoryConcept.ts";
@@ -43,13 +43,18 @@ export default class TeamMembershipConcept {
    * @returns The ID of the new team on success
    */
 
-  async createTeam(title: string, coach: User, passKey: string): Promise<{ newTeam: Team } | { error: string }> {
+  async createTeam(
+    title: string,
+    coach: User,
+    passKey: string
+  ): Promise<{ newTeam: Team } | { error: string }> {
     // verify the coach does not already coach another team
-    const existingCoachTeam = await this.teams.findOne({ coach: coach });
+    const existingCoachTeam = await this.teams.findOne({
+      "coach._id": coach._id,
+    });
     if (existingCoachTeam) {
       return {
-        error:
-          `User with userId: ${coach} already coaches team "${existingCoachTeam.name}"`,
+        error: `User with userId: ${coach} already coaches team "${existingCoachTeam.name}"`,
       };
     }
 
@@ -90,8 +95,12 @@ export default class TeamMembershipConcept {
    * @returns An empty object on success, or an error message.
    */
 
-  async addAthlete(title: string, athlete: User, passKey: string): Promise<Empty | { error: string }> {
-//verify the team exists
+  async addAthlete(
+    title: string,
+    athlete: User,
+    passKey: string
+  ): Promise<Empty | { error: string }> {
+    //verify the team exists
     const team = await this.teams.findOne({ name: title });
 
     if (!team) {
@@ -103,15 +112,15 @@ export default class TeamMembershipConcept {
       return { error: "Invalid passKey for this team." };
     }
 
-    //verify the athlete is not already in another team
-    if (team.athletes.includes(athlete)) {
+    // verify the athlete is not already on this team (compare by _id)
+    if (team.athletes.some((a) => a._id === athlete._id)) {
       return { error: `Athlete ${athlete} is already a member of "${title}"` };
     }
 
     //add athlete to team
     await this.teams.updateOne(
       { _id: team._id },
-      { $addToSet: { athletes: athlete } },
+      { $addToSet: { athletes: athlete } }
     );
 
     return {};
@@ -129,7 +138,10 @@ export default class TeamMembershipConcept {
    *
    * @returns An empty object on success, or an error message.
    */
-  async removeAthlete(title: string, athlete: User): Promise<Empty | { error: string }> {
+  async removeAthlete(
+    title: string,
+    athlete: User
+  ): Promise<Empty | { error: string }> {
     //verify the team exists
     const team = await this.teams.findOne({ name: title });
 
@@ -137,8 +149,9 @@ export default class TeamMembershipConcept {
       return { error: `Team with name "${title}" not found.` };
     }
 
-    //verify the athlete is current part of the team and can be removed
-    if (!team.athletes.includes(athlete)) {
+    // verify the athlete is currently part of the team (compare by _id)
+    console.log("team.athletes:", team.athletes);
+    if (!team.athletes.some((a) => a._id === athlete._id)) {
       return {
         error: `Athlete ${athlete} is not a member of team "${title}".`,
       };
@@ -147,7 +160,7 @@ export default class TeamMembershipConcept {
     //remove the athelte
     await this.teams.updateOne(
       { _id: team._id },
-      { $pull: { athletes: athlete } }, // $pull removes the specified value from the array
+      { $pull: { athletes: { _id: athlete._id } } } // remove by matching nested _id
     );
 
     return {};
@@ -163,7 +176,7 @@ export default class TeamMembershipConcept {
    * @returns An array of all teams by the given user.
    */
   async getTeamByCoach(coachId: User): Promise<Team | { error: string }> {
-    const team = await this.teams.findOne({ coach: coachId });
+    const team = await this.teams.findOne({ "coach._id": coachId._id });
     if (!team) {
       return { error: `Coach ${coachId} does not have a team` };
     }
@@ -180,8 +193,8 @@ export default class TeamMembershipConcept {
    * @returns the teamt the athlete belongs to
    */
   async getTeamByAthlete(athleteId: User): Promise<Team | { error: string }> {
-    //get the team
-    const team = await this.teams.findOne({ athletes: { $in: [athleteId] } });
+    // get the team by nested athlete _id
+    const team = await this.teams.findOne({ "athletes._id": athleteId._id });
     if (!team) {
       return { error: `Athlete ${athleteId} does not belong to a team` };
     }
@@ -193,7 +206,7 @@ export default class TeamMembershipConcept {
    *
    * @requires the team exists
    * @effects returns the athletes on that team
-   * 
+   *
    * @param teamId - The id of the team.
    * @returns A list of athlete IDs in the team, or an error.
    */

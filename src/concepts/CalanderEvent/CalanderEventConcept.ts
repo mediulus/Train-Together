@@ -1,4 +1,4 @@
-import { Collection, Db } from "npm:mongodb";
+import { Collection, Db } from "mongodb";
 import { Empty, ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
 
