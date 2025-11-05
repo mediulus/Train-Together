@@ -11,6 +11,7 @@ type EventID = ID;
  */
 export interface Event {
   _id: EventID;
+  teamId: ID; // team scope
   startTime: Date;
   endTime: Date;
   location: string;
@@ -61,20 +62,24 @@ export default class CalanderEventConcept {
    * @returns Returns the ID of the newly created event on success, or an error message.
    */
 
-  async createEvent(startTime: Date,
+  async createEvent(
+    teamId: ID,
+    startTime: Date,
     endTime: Date,
     location: string,
     title: string,
     description?: string,
-    link?: string,
+    link?: string
   ): Promise<{ event: EventID } | { error: string }> {
     //verify timing constraint
     if (startTime.getTime() >= endTime.getTime()) {
       return { error: "Event start time must be before end time." };
     }
 
+    
     const newEvent: Event = {
       _id: freshID(), // Generate a new, unique ID for the event
+      teamId,
       startTime,
       endTime,
       location,
@@ -102,7 +107,7 @@ export default class CalanderEventConcept {
    *
    * @returns an empty object on success, or an error message.
    */
-  async deleteEvent( event: EventID): Promise<Empty | { error: string }> {
+  async deleteEvent(event: EventID): Promise<Empty | { error: string }> {
     // Requires: event exists
     try {
       const result = await this.events.deleteOne({ _id: event });
@@ -123,7 +128,7 @@ export default class CalanderEventConcept {
    * @requires all updates are an attribute of event
    * @requires if changing start or end time that they are still start < end
    * @effects edits the event
-   * 
+   *
    * @param {Object} args - The arguments for editing an event.
    * @param {UserIdentifier} args.editor - The identifier of the user editing the event.
    * @param {EventID} args.event - The ID of the event to edit.
@@ -131,7 +136,10 @@ export default class CalanderEventConcept {
    *
    * @returns an empty object on success, or an error message.
    */
-  async editEvent(event: EventID,updates: Partial<Omit<Event, "_id">>): Promise<Empty | { error: string }> {
+  async editEvent(
+    event: EventID,
+    updates: Partial<Omit<Event, "_id">>
+  ): Promise<Empty | { error: string }> {
     try {
       // make sure only the updateable fields are there
       const EDITABLE_FIELDS = new Set<keyof Omit<Event, "_id">>([
@@ -143,13 +151,13 @@ export default class CalanderEventConcept {
         "link",
       ]);
       const badKeys = Object.keys(updates).filter(
-        (k) => !EDITABLE_FIELDS.has(k as keyof Omit<Event, "_id">),
+        (k) => !EDITABLE_FIELDS.has(k as keyof Omit<Event, "_id">)
       );
       if (badKeys.length > 0) {
         return {
-          error: `Unknown or disallowed fields in updates: ${
-            badKeys.join(", ")
-          }`,
+          error: `Unknown or disallowed fields in updates: ${badKeys.join(
+            ", "
+          )}`,
         };
       }
 
@@ -187,19 +195,19 @@ export default class CalanderEventConcept {
       const $set: Partial<Event> = {};
       const $unset: Record<string, ""> = {};
 
-      for (const [k, v] of Object.entries(updates)) {
+      for (const [k, v] of Object.entries(updates) as Array<
+        [keyof Omit<Event, "_id">, unknown]
+      >) {
         if (v === undefined) continue; // omit → no change
 
-        if (
-          (k === "description" || k === "link") &&
-          (v === "" || (v as any) === null)
-        ) {
+        if ((k === "description" || k === "link") && (v === "" || v === null)) {
           $unset[k] = "";
           continue;
         }
 
         // For all other fields, set directly (types assumed correct at this layer)
-        ($set as any)[k] = v;
+        // Narrow assignment using keyof and type guard
+        ($set as Record<string, unknown>)[k as string] = v as never;
       }
 
       // If nothing to change, short-circuit
@@ -237,7 +245,9 @@ export default class CalanderEventConcept {
    *
    * @returns the ID of the new, duplicated event on success, or an error message.
    */
-  async duplicateEvent(event: EventID): Promise<{ duplicateEvent: EventID } | { error: string }> {
+  async duplicateEvent(
+    event: EventID
+  ): Promise<{ duplicateEvent: EventID } | { error: string }> {
     // Requires: event exists
     try {
       const existingEvent = await this.events.findOne({ _id: event });
@@ -277,10 +287,12 @@ export default class CalanderEventConcept {
     day: number,
     month: number,
     year: number,
+    teamId: ID
   ): Promise<{ events: Event[] } | { error: string }> {
     // Basic parameter validation
     if (
-      !Number.isInteger(day) || !Number.isInteger(month) ||
+      !Number.isInteger(day) ||
+      !Number.isInteger(month) ||
       !Number.isInteger(year)
     ) {
       return { error: "day, month and year must be integers." };
@@ -293,17 +305,21 @@ export default class CalanderEventConcept {
     // Validate that the date components did not roll over (e.g., invalid day like Feb 30)
     if (
       startOfDay.getFullYear() !== year ||
-      startOfDay.getMonth() !== month - 1 || startOfDay.getDate() !== day
+      startOfDay.getMonth() !== month - 1 ||
+      startOfDay.getDate() !== day
     ) {
       return { error: `Invalid date: ${year}-${month}-${day}` };
     }
 
     try {
       // Find events that overlap the requested day: startTime <= endOfDay AND endTime >= startOfDay
-      const events = await this.events.find({
-        startTime: { $lte: endOfDay },
-        endTime: { $gte: startOfDay },
-      }).toArray();
+      const events = await this.events
+        .find({
+          teamId,
+          startTime: { $lte: endOfDay },
+          endTime: { $gte: startOfDay },
+        })
+        .toArray();
 
       return { events };
     } catch (e) {

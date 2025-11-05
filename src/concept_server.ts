@@ -289,12 +289,12 @@ async function main() {
     try {
       const body = await c.req.json();
       console.log("Received CalanderEvent.createEvent request:", body);
-      const { title, location, startTime, endTime, description, link } =
+      const { teamId, title, location, startTime, endTime, description, link } =
         body || {};
 
-      if (!title || !location || !startTime || !endTime) {
+      if (!teamId || !title || !location || !startTime || !endTime) {
         return c.json(
-          { error: "Missing title, location, startTime, or endTime" },
+          { error: "Missing teamId, title, location, startTime, or endTime" },
           400
         );
       }
@@ -312,6 +312,7 @@ async function main() {
       }
 
       const result = await calanderEvent.createEvent(
+        teamId as ID,
         start,
         end,
         String(location),
@@ -382,9 +383,10 @@ async function main() {
       const dayStr = c.req.query("day");
       const monthStr = c.req.query("month");
       const yearStr = c.req.query("year");
+      const teamId = c.req.query("teamId");
 
-      if (!dayStr || !monthStr || !yearStr) {
-        return c.json({ error: "Missing day, month, or year" }, 400);
+      if (!dayStr || !monthStr || !yearStr || !teamId) {
+        return c.json({ error: "Missing teamId, day, month, or year" }, 400);
       }
 
       const day = Number(dayStr);
@@ -399,7 +401,12 @@ async function main() {
         return c.json({ error: "day, month and year must be integers" }, 400);
       }
 
-      const result = await calanderEvent.getEventsByDate(day, month, year);
+      const result = await calanderEvent.getEventsByDate(
+        day,
+        month,
+        year,
+        teamId as ID
+      );
       return c.json(result);
     } catch (e) {
       console.error("Error in CalanderEvent.getEventsByDate:", e);
@@ -456,7 +463,7 @@ async function main() {
         const userId = c.req.query("userId");
         const dateStr = c.req.query("date");
         if (!userId) return c.json({ error: "Missing userId" }, 400);
-        
+
         // Resolve requester
         const requesterRes = await userDirectory.getUser(userId as ID);
         if (isError(requesterRes)) return c.json(requesterRes, 400);

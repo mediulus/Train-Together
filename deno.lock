@@ -535,6 +535,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@hono/hono@^4.6.10",
+      "jsr:@std/assert@^1.0.6",
       "jsr:@std/cli@^1.0.6",
       "jsr:@std/fs@^1.0.6",
       "jsr:@std/path@^1.0.6",
