@@ -2,11 +2,12 @@
   "version": "5",
   "specifiers": {
     "jsr:@hono/hono@*": "4.10.1",
+    "jsr:@std/cli@*": "1.0.23",
     "jsr:@std/dotenv@*": "0.225.2",
     "jsr:@std/fs@*": "1.0.19",
     "jsr:@std/internal@^1.0.10": "1.0.12",
     "jsr:@std/internal@^1.0.9": "1.0.12",
-    "jsr:@std/path@*": "1.0.8",
+    "jsr:@std/path@*": "1.1.2",
     "jsr:@std/path@^1.1.1": "1.1.2",
     "jsr:@std/uuid@*": "1.0.7",
     "jsr:@std/yaml@*": "1.0.9",
@@ -22,6 +23,9 @@
   "jsr": {
     "@hono/hono@4.10.1": {
       "integrity": "cea3f17677afcd84a654cd1633c136e6bb2220bfa512fdac56614bb97c39fdbf"
+    },
+    "@std/cli@1.0.23": {
+      "integrity": "bf95b7a9425ba2af1ae5a6359daf58c508f2decf711a76ed2993cd352498ccca"
     },
     "@std/dotenv@0.225.2": {
       "integrity": "e2025dce4de6c7bca21dece8baddd4262b09d5187217e231b033e088e0c4dd23"

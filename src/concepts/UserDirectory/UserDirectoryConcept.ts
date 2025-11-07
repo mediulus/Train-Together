@@ -1,4 +1,4 @@
-import { Collection, Db } from "mongodb";
+import { Collection, Db, ObjectId } from "mongodb";
 import { Empty, ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from "jose";
@@ -151,12 +151,10 @@ export default class UserDirectoryConcept {
    * @param userId the id of the user
    * @returns the user queried for
    */
-  async getUser(userId: UserID): Promise<User | { error: string }> {
-    const userID = String(userId);
-    console.log(userID);
-    console.log('type of', typeof(userID));
-    console.log(userId);
-    const user = await this.users.findOne({ _id: userID });
+  async getUser({userId}): Promise<User | { error: string }> {
+    console.log('type of', typeof(userId));
+    console.log('user id', userId['userId']);
+    const user = await this.users.findOne({ _id: userId});
     if (!user) {
       return { error: "this user does not exists" };
     }
