@@ -43,41 +43,57 @@ export default class TeamMembershipConcept {
    * @returns The ID of the new team on success
    */
 
-  async createTeam(
-    title: string,
-    coach: User,
-    passKey: string
-  ): Promise<{ newTeam: Team } | { error: string }> {
+  async createTeam(params: {
+    title?: string;
+    coach?: User;
+    coachId?: ID;
+    passKey?: string;
+  }): Promise<{ newTeam: Team } | { error: string }> {
+    const title = params.title?.trim();
+    const passKey = params.passKey?.trim();
+    const coachParam = params.coach ?? params.coachId;
+    const coachId =
+      typeof coachParam === "string" ? coachParam : coachParam?._id;
+    const coach: User | undefined =
+      typeof coachParam === "object" && coachParam !== null
+        ? (coachParam as User)
+        : coachId
+        ? ({ _id: coachId } as unknown as User)
+        : undefined;
+
+    if (!title) return { error: "Missing title." };
+    if (!passKey) return { error: "Missing passKey." };
+    if (!coachId) return { error: "Missing coachId." };
+    if (!coach) return { error: "Invalid coach reference." };
+
     // verify the coach does not already coach another team
     const existingCoachTeam = await this.teams.findOne({
-      "coach._id": coach._id,
+      "coach._id": coachId,
     });
     if (existingCoachTeam) {
       return {
-        error: `User with userId: ${coach} already coaches team "${existingCoachTeam.name}"`,
+        error: `User with userId: ${coachId} already coaches team "${existingCoachTeam.name}"`,
       };
     }
 
     // verify team does not exist
     const existingTeam = await this.teams.findOne({ name: title });
-
     if (existingTeam) {
       return { error: `Team with name "${title}" already exists.` };
     }
 
-    //generate the new team
+    // generate the new team
     const newTeamID = freshID() as TeamID;
-
     const newTeam: Team = {
       _id: newTeamID,
       name: title,
-      coach: coach,
-      passKey: passKey,
-      athletes: [], // New teams start with no athletes
+      coach,
+      passKey,
+      athletes: [],
     };
 
     await this.teams.insertOne(newTeam);
-    return { newTeam: newTeam };
+    return { newTeam };
   }
 
   /**
@@ -96,10 +112,32 @@ export default class TeamMembershipConcept {
    */
 
   async addAthlete(
-    title: string,
-    athlete: User,
-    passKey: string
+    params:
+      | { title: string; athlete?: User; athleteId?: ID; passKey: string }
+      | string,
+    maybeAthleteOrId?: User | ID,
+    maybePassKey?: string
   ): Promise<Empty | { error: string }> {
+    const title = typeof params === "string" ? params : params.title;
+    const passKey =
+      typeof params === "string" ? (maybePassKey as string) : params.passKey;
+    const athleteParam =
+      typeof params === "string"
+        ? maybeAthleteOrId
+        : params.athlete ?? params.athleteId;
+    const athleteId =
+      typeof athleteParam === "string" ? athleteParam : athleteParam?._id;
+    const fullAthlete =
+      typeof athleteParam === "object" && athleteParam !== null
+        ? (athleteParam as User)
+        : athleteId
+        ? ({ _id: athleteId } as unknown as User)
+        : undefined;
+
+    if (!title) return { error: "Missing title." };
+    if (!athleteId) return { error: "Missing athleteId." };
+    if (!passKey) return { error: "Missing passKey." };
+
     //verify the team exists
     const team = await this.teams.findOne({ name: title });
 
@@ -113,14 +151,16 @@ export default class TeamMembershipConcept {
     }
 
     // verify the athlete is not already on this team (compare by _id)
-    if (team.athletes.some((a) => a._id === athlete._id)) {
-      return { error: `Athlete ${athlete} is already a member of "${title}"` };
+    if (team.athletes.some((a) => String(a._id) === String(athleteId))) {
+      return {
+        error: `Athlete ${athleteId} is already a member of "${title}"`,
+      };
     }
 
     //add athlete to team
     await this.teams.updateOne(
       { _id: team._id },
-      { $addToSet: { athletes: athlete } }
+      { $addToSet: { athletes: fullAthlete! } }
     );
 
     return {};
@@ -139,9 +179,20 @@ export default class TeamMembershipConcept {
    * @returns An empty object on success, or an error message.
    */
   async removeAthlete(
-    title: string,
-    athlete: User
+    params: { title: string; athlete?: User; athleteId?: ID } | string,
+    maybeAthlete?: User | ID
   ): Promise<Empty | { error: string }> {
+    const title = typeof params === "string" ? params : params.title;
+    const athleteParam =
+      typeof params === "string"
+        ? maybeAthlete
+        : params.athlete ?? params.athleteId;
+    const athleteId =
+      typeof athleteParam === "string" ? athleteParam : athleteParam?._id;
+
+    if (!title) return { error: "Missing title." };
+    if (!athleteId) return { error: "Missing athleteId." };
+
     //verify the team exists
     const team = await this.teams.findOne({ name: title });
 
@@ -151,16 +202,16 @@ export default class TeamMembershipConcept {
 
     // verify the athlete is currently part of the team (compare by _id)
     console.log("team.athletes:", team.athletes);
-    if (!team.athletes.some((a) => a._id === athlete._id)) {
+    if (!team.athletes.some((a) => String(a._id) === String(athleteId))) {
       return {
-        error: `Athlete ${athlete} is not a member of team "${title}".`,
+        error: `Athlete ${athleteId} is not a member of team "${title}".`,
       };
     }
 
     //remove the athelte
     await this.teams.updateOne(
       { _id: team._id },
-      { $pull: { athletes: { _id: athlete._id } } } // remove by matching nested _id
+      { $pull: { athletes: { _id: athleteId } } } // remove by matching nested _id
     );
 
     return {};
@@ -172,13 +223,26 @@ export default class TeamMembershipConcept {
    * @requires the coach has a team
    * @effects returns the team the coach coaches
    *
+   *
    * @param coachId The coach.
    * @returns An array of all teams by the given user.
    */
-  async getTeamByCoach(coachId: User): Promise<Team | { error: string }> {
-    const team = await this.teams.findOne({ "coach._id": coachId._id });
+  async getTeamByCoach(
+    input: { coachId?: User | ID } | User | ID
+  ): Promise<Team | { error: string }> {
+    console.log;
+    const coachParam =
+      typeof input === "object" && input !== null && "coachId" in input
+        ? (input as { coachId?: User | ID }).coachId
+        : input;
+    const id =
+      typeof coachParam === "string"
+        ? coachParam
+        : (coachParam as User | undefined)?._id;
+    if (!id) return { error: "Missing coachId." };
+    const team = await this.teams.findOne({ "coach._id": id });
     if (!team) {
-      return { error: `Coach ${coachId} does not have a team` };
+      return { error: `Coach ${id} does not have a team` };
     }
     return team;
   }
@@ -192,11 +256,21 @@ export default class TeamMembershipConcept {
    * @param athleteId a valid userId that belongs to the athlete you are querying for
    * @returns the teamt the athlete belongs to
    */
-  async getTeamByAthlete(athleteId: User): Promise<Team | { error: string }> {
-    // get the team by nested athlete _id
-    const team = await this.teams.findOne({ "athletes._id": athleteId._id });
+  async getTeamByAthlete(
+    input: { athleteId?: User | ID } | User | ID
+  ): Promise<Team | { error: string }> {
+    const athleteParam =
+      typeof input === "object" && input !== null && "athleteId" in input
+        ? (input as { athleteId?: User | ID }).athleteId
+        : input;
+    const id =
+      typeof athleteParam === "string"
+        ? athleteParam
+        : (athleteParam as User | undefined)?._id;
+    if (!id) return { error: "Missing athleteId." };
+    const team = await this.teams.findOne({ "athletes._id": id });
     if (!team) {
-      return { error: `Athlete ${athleteId} does not belong to a team` };
+      return { error: `Athlete ${id} does not belong to a team` };
     }
     return team;
   }
@@ -218,5 +292,35 @@ export default class TeamMembershipConcept {
     }
 
     return team.athletes;
+  }
+
+  /**
+   * Disbands a team (coach only)
+   *
+   * @requires team with name exists
+   * @requires requesting coach owns the team
+   * @effects deletes the team document
+   *
+   * @param params { title, coachId | coach }
+   * @returns {} | { error }
+   */
+  async deleteTeam(
+    params: { title?: string; coachId?: ID; coach?: User } | string,
+    maybeCoach?: User | ID
+  ): Promise<Empty | { error: string }> {
+    const title = typeof params === "string" ? params : params.title;
+    const coachParam =
+      typeof params === "string" ? maybeCoach : params.coach ?? params.coachId;
+    const coachId =
+      typeof coachParam === "string" ? coachParam : coachParam?._id;
+    if (!title) return { error: "Missing title." };
+    if (!coachId) return { error: "Missing coachId." };
+    const team = await this.teams.findOne({ name: title });
+    if (!team) return { error: `Team with name "${title}" not found.` };
+    if (String(team.coach._id) !== String(coachId)) {
+      return { error: "Only the coach of this team can disband it." };
+    }
+    await this.teams.deleteOne({ _id: team._id });
+    return {};
   }
 }

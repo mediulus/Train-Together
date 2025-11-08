@@ -1,10 +1,11 @@
 import { Collection, Db } from "mongodb";
 import { ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
-import UserDirectoryConcept, {
+import _UserDirectoryConcept, {
   User,
   UserID,
 } from "../UserDirectory/UserDirectoryConcept.ts";
+import { Team } from "../TeamMembership/TeamMembershipConcept.ts";
 
 export interface AthleteData {
   id: ID;
@@ -141,6 +142,7 @@ export default class TrainingRecordsConcept {
   private weeklyRecords: Collection<WeeklySummary>;
   private athleteData: Collection<AthleteData>;
   private users: Collection<User>;
+  private teams: Collection<Team>;
 
   constructor(private readonly db: Db) {
     this.weeklyRecords = this.db.collection<WeeklySummary>(
@@ -148,6 +150,7 @@ export default class TrainingRecordsConcept {
     );
     this.athleteData = this.db.collection<AthleteData>(PREFIX + "athleteData");
     this.users = this.db.collection<User>("UserDirectory.users");
+    this.teams = this.db.collection<Team>("TeamMembership.teams");
 
     // Helpful indexes
     void this.athleteData.createIndex(
@@ -242,7 +245,6 @@ export default class TrainingRecordsConcept {
       if (!createdEntry) {
         return { error: "Failed to retrieve created entry." };
       }
-      console.log("Created entry:", createdEntry);
       return createdEntry;
     }
   }
@@ -339,7 +341,6 @@ export default class TrainingRecordsConcept {
         .sort({ day: 1 })
         .toArray();
 
-      console.log("these are the listed entries:", entries);
       return { entries };
     } catch (e) {
       console.error("listEntries failed:", e);
@@ -364,11 +365,76 @@ export default class TrainingRecordsConcept {
    * @returns A promise that resolves to the weekly summary or an error message
    */
   async createWeeklySummary(
-    athlete: User,
-    todaysDate: Date
+    input:
+      | User
+      | {
+          userId?: UserID;
+          athleteId?: UserID;
+          athlete?: User;
+          todaysDate?: string | Date;
+          date?: string | Date;
+        },
+    maybeDate?: Date | string
   ): Promise<WeeklySummary | { error: string }> {
-    //find the week range (sunday-saturday) for todaysDate
-    console.log(athlete.name);
+    // Support both createWeeklySummary(athlete, date) and HTTP-friendly object payload
+    let athlete: User | undefined;
+    let dateInput: Date | string | undefined = maybeDate as
+      | Date
+      | string
+      | undefined;
+
+    if (
+      typeof input === "object" &&
+      input !== null &&
+      ("userId" in input ||
+        "athleteId" in input ||
+        "todaysDate" in input ||
+        "date" in input ||
+        "athlete" in input)
+    ) {
+      const payload = input as {
+        userId?: UserID;
+        athleteId?: UserID;
+        athlete?: User;
+        todaysDate?: string | Date;
+        date?: string | Date;
+      };
+      athlete = payload.athlete;
+      const id = payload.userId ?? payload.athleteId;
+      if (!athlete && id) {
+        const found = await this.users.findOne({ _id: id });
+        if (!found) return { error: "User not found." };
+        athlete = found as User;
+      }
+      dateInput = payload.todaysDate ?? payload.date;
+    } else {
+      athlete = input as User;
+    }
+
+    if (!athlete) return { error: "Missing athlete." };
+
+    // Determine date to use (default to today if omitted)
+    let todaysDate: Date;
+    if (dateInput) {
+      if (typeof dateInput === "string") {
+        // If YYYY-MM-DD, parse in local time
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+          todaysDate = parseLocalDate(dateInput);
+        } else {
+          todaysDate = new Date(dateInput);
+        }
+      } else {
+        todaysDate = new Date(dateInput);
+      }
+    } else {
+      todaysDate = new Date();
+    }
+    if (!(todaysDate instanceof Date) || isNaN(todaysDate.getTime())) {
+      return { error: "Invalid date." };
+    }
+
+    // find the week range (sunday-saturday) for todaysDate
+    console.log(athlete.name ?? "(no name)");
     // Normalize todaysDate to local midnight to avoid TZ drift
     const todayLocal = parseLocalDate(toLocalYMD(todaysDate));
     const weekStart = sundayOf(todayLocal); // inclusive
@@ -395,7 +461,6 @@ export default class TrainingRecordsConcept {
       })
       .sort({ day: 1 })
       .toArray();
-    console.log("Current week data:", currentWeekData);
 
     if (currentWeekData.length === 0) {
       return { error: "No athlete data found for the current week." };
@@ -466,5 +531,73 @@ export default class TrainingRecordsConcept {
 
     // Return the generated object
     return weeklySummary;
+  }
+
+  /**
+   * Aggregate weekly summaries for all athletes on the requester's team.
+   * Accepts object payload: { userId, date | todaysDate }
+   * Finds the team where userId is the coach or an athlete, then computes summaries for each athlete.
+   * Returns { summaries: WeeklySummary[] } or { error }.
+   */
+  async getTeamWeeklySummaries(input: {
+    userId?: UserID;
+    date?: string | Date;
+    todaysDate?: string | Date;
+  }): Promise<{ summaries: WeeklySummary[] } | { error: string }> {
+    try {
+      const userId = input.userId;
+      if (!userId) return { error: "Missing userId." };
+
+      // Resolve date (reuse local parsing logic)
+      let dateInput: Date | undefined;
+      const rawDate = input.todaysDate ?? input.date;
+      if (rawDate) {
+        if (typeof rawDate === "string") {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+            dateInput = parseLocalDate(rawDate);
+          } else {
+            dateInput = new Date(rawDate);
+          }
+        } else {
+          dateInput = new Date(rawDate);
+        }
+      } else {
+        dateInput = new Date();
+      }
+      if (!dateInput || isNaN(dateInput.getTime())) {
+        return { error: "Invalid date." };
+      }
+
+      // Find team where user is coach first; else as athlete
+      const team =
+        (await this.teams.findOne({ "coach._id": userId })) ||
+        (await this.teams.findOne({ "athletes._id": userId }));
+      if (!team) return { error: "User does not belong to a team." };
+
+      // Rehydrate full user objects from users collection to ensure names present
+      const athleteIds = team.athletes.map((a) => a._id).filter(Boolean);
+      const fullUsers = await this.users
+        .find({ _id: { $in: athleteIds } })
+        .toArray();
+      const userMap = new Map<string, User>();
+      for (const u of fullUsers) userMap.set(String(u._id), u);
+
+      const summaries: WeeklySummary[] = [];
+      for (const athlete of team.athletes) {
+        const full = userMap.get(String(athlete._id)) || athlete;
+        const result = await this.createWeeklySummary({
+          athlete: full,
+          todaysDate: dateInput,
+        });
+        if (result && !("error" in result)) {
+          summaries.push(result);
+        }
+      }
+
+      return { summaries };
+    } catch (e) {
+      console.error("getTeamWeeklySummaries failed:", e);
+      return { error: "Failed to get team weekly summaries." };
+    }
   }
 }

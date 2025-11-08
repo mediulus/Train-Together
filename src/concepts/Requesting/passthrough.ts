@@ -26,11 +26,27 @@
 
 export const inclusions: Record<string, string> = {
   // Feel free to delete these example inclusions
-  "/api/LikertSurvey/_getSurveyQuestions": "this is a public query",
-  "/api/LikertSurvey/_getSurveyResponses": "responses are public",
-  "/api/LikertSurvey/_getRespondentAnswers": "answers are visible",
-  "/api/LikertSurvey/submitResponse": "allow anyone to submit response",
-  "/api/LikertSurvey/updateResponse": "allow anyone to update their response",
+  "/api/CalanderEvent/getEvent": "this is a public query",
+  "/api/CalanderEvent/getEventsByDate": "this is a public query",
+  "/api/TeamMembership/getTeamByCoach": "this is a public query",
+  "/api/TeamMembership/getTeamByAthlete": "this is a public query",
+  "/api/TeamMembership/getAthletesByTeam": "this is a public query",
+  "/api/TrainingRecords/logData": "this is a public action",
+  "/api/TrainingRecords/logDailyEntry": "this is a public action",
+  "/api/TrainingRecords/listEntries": "this is a public query",
+  "/api/TrainingRecords/createWeeklySummary": "this is a public action",
+  "/api/UserDirectory/normalizeEmail": "this is a public query",
+  "/api/UserDirectory/loginWithGoogleIdToken": "this is a public action",
+  "/api/UserDirectory/getUser": "this is a public query",
+  "/api/UserDirectory/loginWithGoogle": "this is a public action",
+  "/api/UserDirectory/setName": "this is a public action",
+  "/api/UserDirectory/setGender": "this is a public action",
+  "/api/UserDirectory/getAthleteMileage": "this is a public query",
+
+  "/api/UserDirectory/getUserRole": "this is a public query",
+  "/api/Notification/ensureGmail": "this is a public action",
+  "/api/TrainingRecords/getTeamWeeklySummaries": "this is a public query",
+  "/api/Notification/base64UrlEncode": "this is a public action",
 };
 
 /**
@@ -44,7 +60,19 @@ export const inclusions: Record<string, string> = {
  */
 
 export const exclusions: Array<string> = [
-  // Feel free to delete these example exclusions
-  "/api/LikertSurvey/createSurvey",
-  "/api/LikertSurvey/addQuestion",
+  "/api/TeamMembership/createTeam",
+  "/api/TeamMembership/deleteTeam",
+  "/api/TeamMembership/removeAthlete",
+  "/api/TeamMembership/addAthlete",
+
+  "/api/CalanderEvent/deleteEvent",
+  "/api/CalanderEvent/createEvent",
+  "/api/CalanderEvent/editEvent",
+
+  "/api/UserDirectory/setWeeklyMileage",
+  "/api/UserDirectory/setRole",
+
+  "/api/Notification/create",
+  "/api/Notification/send",
+  "/api/Notification/composeHtmlEmail",
 ];

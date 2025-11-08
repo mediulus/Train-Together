@@ -1,4 +1,4 @@
-import { Collection, Db, ObjectId } from "mongodb";
+import { Collection, Db } from "mongodb";
 import { Empty, ID } from "@utils/types.ts";
 import { freshID } from "@utils/database.ts";
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from "jose";
@@ -97,7 +97,6 @@ export default class UserDirectoryConcept {
     | { userId: UserID; needsName: boolean; needsRole: boolean }
     | { error: string }
   > {
-    console.log("inside loginWithGoogleIdToken");
     const idToken = typeof input === "string" ? input : input?.idToken;
     if (!idToken) {
       console.log("Missing idToken.");
@@ -151,10 +150,12 @@ export default class UserDirectoryConcept {
    * @param userId the id of the user
    * @returns the user queried for
    */
-  async getUser({userId}): Promise<User | { error: string }> {
-    console.log('type of', typeof(userId));
-    console.log('user id', userId['userId']);
-    const user = await this.users.findOne({ _id: userId});
+  async getUser({
+    userId,
+  }: {
+    userId: UserID;
+  }): Promise<User | { error: string }> {
+    const user = await this.users.findOne({ _id: userId });
     if (!user) {
       return { error: "this user does not exists" };
     }
@@ -292,11 +293,19 @@ export default class UserDirectoryConcept {
    * @param role (Role) {athlete | coach}
    */
   async setRole(
-    userId: UserID,
-    role: string
+    params: { userId: UserID; role: string } | UserID,
+    maybeRole?: string
   ): Promise<Empty | { error: string }> {
-    // Ensure user exists first
+    // Support both setRole(userId, role) and setRole({ userId, role })
+    const userId =
+      typeof params === "string" ? (params as UserID) : params.userId;
+    const role =
+      typeof params === "string" ? (maybeRole as string) : params.role;
+
     console.log("Setting role for userId:", userId, "to role:", role);
+    if (!userId) return { error: "Missing userId." };
+    if (!role) return { error: "Missing role." };
+
     const existing = await this.users.findOne({ _id: userId as UserID });
     if (!existing) {
       return { error: "User not found." };
@@ -324,14 +333,34 @@ export default class UserDirectoryConcept {
    * @param gender (Role) {male | female}
    */
   async setGender(
-    userId: UserID,
-    gender: Gender
+    params: { userId: UserID; gender: Gender | string } | UserID,
+    maybeGender?: Gender | string
   ): Promise<Empty | { error: string }> {
+    // Support both setGender(userId, gender) and setGender({ userId, gender })
+    const userId =
+      typeof params === "string" ? (params as UserID) : params.userId;
+    const rawGender =
+      typeof params === "string"
+        ? (maybeGender as string | Gender)
+        : params.gender;
+
+    if (!userId) return { error: "Missing userId." };
+    if (!rawGender) return { error: "Missing gender." };
+
+    // Normalize gender to enum-compatible value
+    const g = (String(rawGender) || "").toLowerCase();
+    let genderValue: Gender | null = null;
+    if (g === "male") genderValue = Gender.Male;
+    if (g === "female") genderValue = Gender.Female;
+    if (!genderValue) return { error: "Invalid gender." };
+
+    const existing = await this.users.findOne({ _id: userId as UserID });
+    if (!existing) return { error: "User not found." };
+
     const res = await this.users.updateOne(
       { _id: userId },
-      { $set: { gender } }
+      { $set: { gender: genderValue } }
     );
-
     if (res.matchedCount === 0) return { error: "User not found." };
     return {};
   }
@@ -348,13 +377,34 @@ export default class UserDirectoryConcept {
    *
    */
   async setWeeklyMileage(
-    user_id: UserID,
-    weeklyMileage: number
+    params:
+      | {
+          userId?: UserID;
+          weeklyMileage?: number | string;
+          newMileage?: number | string;
+        }
+      | UserID,
+    maybeMileage?: number | string
   ): Promise<Empty | { error: string }> {
-    const user = await this.users.findOne({ _id: user_id as UserID });
+    console.log("inside weekly mileage");
+    const userId =
+      typeof params === "string"
+        ? (params as UserID)
+        : (params.userId as UserID);
+    const raw =
+      typeof params === "string"
+        ? maybeMileage
+        : params.weeklyMileage ?? params.newMileage;
+    if (!userId) return { error: "Missing userId." };
+    if (raw === undefined || raw === null)
+      return { error: "Missing weeklyMileage." };
+    const weeklyMileage = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(weeklyMileage) || weeklyMileage < 0)
+      return { error: "Invalid weeklyMileage." };
+    const user = await this.users.findOne({ _id: userId });
 
     if (!user) {
-      console.log("User not found for ID:", user_id);
+      console.log("User not found for ID:", userId);
       return { error: "User not found." };
     }
 
@@ -363,9 +413,14 @@ export default class UserDirectoryConcept {
       return { error: "Only athletes can have weekly mileage set." };
     }
 
+    console.log("Found athlete user", {
+      _id: user._id,
+      currentMileage: user.weeklyMileage,
+    });
+
     try {
       const result = await this.users.updateOne(
-        { _id: user_id },
+        { _id: userId },
         { $set: { weeklyMileage } }
       );
 
@@ -415,34 +470,6 @@ export default class UserDirectoryConcept {
   }
 
   /**
-   * Gets all of the athletes with that associated gender
-   *
-   * @requires there are athletes and athletes with that gender
-   * @effects returns the athletes with that gender
-   *
-   * @paran gender (Gender) {'male' | 'female'} of the athletes you want to get
-   * @returns a list of users that have that associated gender
-   */
-  async getAthletesByGender(
-    gender: Gender
-  ): Promise<{ athletes: User[] } | { error: string }> {
-    try {
-      const athletes = await this.users
-        .find({ role: Role.Athlete, gender: gender })
-        .toArray();
-      return { athletes };
-    } catch (dbError) {
-      console.error(
-        "Database error during fetching athletes by gender:",
-        dbError
-      );
-      return {
-        error: "Failed to fetch athletes due to a database operation error.",
-      };
-    }
-  }
-
-  /**
    * Gets the role of the user
    *
    * @requires user with userId exists
@@ -451,7 +478,14 @@ export default class UserDirectoryConcept {
    * @param userId a valid userId
    * @returns the role of the user or null if it has not yet been set
    */
-  async getUserRole(userId: UserID): Promise<Role | null | { error: string }> {
+  async getUserRole(
+    params: UserID | { userId?: UserID }
+  ): Promise<Role | null | { error: string }> {
+    const userId =
+      typeof params === "string"
+        ? (params as UserID)
+        : (params?.userId as UserID);
+    if (!userId) return { error: "Missing userId." };
     const user = await this.users.findOne({ _id: userId as UserID });
 
     if (!user) {
@@ -459,7 +493,7 @@ export default class UserDirectoryConcept {
     }
 
     const role = user.role;
-    if (role === undefined) {
+    if (role === undefined || role === null) {
       return null;
     }
 

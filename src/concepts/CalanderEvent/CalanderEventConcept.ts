@@ -39,7 +39,12 @@ export default class CalanderEventConcept {
    * @param eventId the id of the event you want
    * @returns the event you queried
    */
-  async getEvent(eventId: EventID): Promise<Event | { error: string }> {
+  async getEvent(
+    input: EventID | { eventId?: EventID; event?: EventID }
+  ): Promise<Event | { error: string }> {
+    const eventId =
+      typeof input === "string" ? input : input.eventId ?? input.event;
+    if (!eventId) return { error: "Missing eventId." };
     const event = await this.events.findOne({ _id: eventId });
 
     if (!event) return { error: `Event with ID '${eventId}' does not exist.` };
@@ -63,22 +68,68 @@ export default class CalanderEventConcept {
    */
 
   async createEvent(
-    teamId: ID,
-    startTime: Date,
-    endTime: Date,
-    location: string,
-    title: string,
-    description?: string,
-    link?: string
+    input:
+      | ID
+      | {
+          teamId?: ID;
+          startTime?: string | Date;
+          endTime?: string | Date;
+          location?: string;
+          title?: string;
+          description?: string;
+          link?: string;
+        },
+    maybeStart?: Date | string,
+    maybeEnd?: Date | string,
+    maybeLocation?: string,
+    maybeTitle?: string,
+    maybeDescription?: string,
+    maybeLink?: string
   ): Promise<{ event: EventID } | { error: string }> {
-    //verify timing constraint
+    // Support createEvent({ teamId, startTime, endTime, ... }) OR positional createEvent(teamId, start, end, location, title, desc?, link?)
+    let teamId: ID | undefined;
+    let startTimeRaw: Date | string | undefined = maybeStart;
+    let endTimeRaw: Date | string | undefined = maybeEnd;
+    let location: string | undefined = maybeLocation;
+    let title: string | undefined = maybeTitle;
+    let description: string | undefined = maybeDescription;
+    let link: string | undefined = maybeLink;
+
+    if (typeof input === "object" && input !== null) {
+      teamId = input.teamId;
+      startTimeRaw = input.startTime;
+      endTimeRaw = input.endTime;
+      location = input.location;
+      title = input.title;
+      description = input.description;
+      link = input.link;
+    } else {
+      teamId = input as ID;
+    }
+
+    if (!teamId) return { error: "Missing teamId." };
+    if (!startTimeRaw) return { error: "Missing startTime." };
+    if (!endTimeRaw) return { error: "Missing endTime." };
+    if (!location) return { error: "Missing location." };
+    if (!title) return { error: "Missing title." };
+
+    const toDate = (v: Date | string | undefined): Date | null => {
+      if (!v) return null;
+      if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? null : d;
+    };
+
+    const startTime = toDate(startTimeRaw);
+    const endTime = toDate(endTimeRaw);
+    if (!startTime) return { error: "Invalid startTime." };
+    if (!endTime) return { error: "Invalid endTime." };
     if (startTime.getTime() >= endTime.getTime()) {
       return { error: "Event start time must be before end time." };
     }
 
-    
     const newEvent: Event = {
-      _id: freshID(), // Generate a new, unique ID for the event
+      _id: freshID(),
       teamId,
       startTime,
       endTime,
@@ -107,13 +158,18 @@ export default class CalanderEventConcept {
    *
    * @returns an empty object on success, or an error message.
    */
-  async deleteEvent(event: EventID): Promise<Empty | { error: string }> {
+  async deleteEvent(
+    input: EventID | { eventId?: EventID; event?: EventID }
+  ): Promise<Empty | { error: string }> {
     // Requires: event exists
     try {
-      const result = await this.events.deleteOne({ _id: event });
+      const eventId =
+        typeof input === "string" ? input : input.eventId ?? input.event;
+      if (!eventId) return { error: "Missing eventId." };
+      const result = await this.events.deleteOne({ _id: eventId });
 
       if (result.deletedCount === 0) {
-        return { error: `Event with ID '${event}' not found.` };
+        return { error: `Event with ID '${eventId}' not found.` };
       }
       return {};
     } catch (e) {
@@ -137,10 +193,33 @@ export default class CalanderEventConcept {
    * @returns an empty object on success, or an error message.
    */
   async editEvent(
-    event: EventID,
-    updates: Partial<Omit<Event, "_id">>
+    input:
+      | EventID
+      | {
+          eventId?: EventID;
+          event?: EventID;
+          updates?: Partial<Omit<Event, "_id">> | null;
+        },
+    maybeUpdates?: Partial<Omit<Event, "_id">>
   ): Promise<Empty | { error: string }> {
     try {
+      // Normalize args: support editEvent(eventId, updates) and editEvent({ eventId|event, updates })
+      const eventId: EventID | undefined =
+        typeof input === "string"
+          ? (input as EventID)
+          : input?.eventId ?? input?.event;
+      const updatesRaw =
+        typeof input === "string"
+          ? maybeUpdates
+          : (input?.updates as Partial<Omit<Event, "_id">> | null | undefined);
+
+      if (!eventId) return { error: "Missing eventId." };
+      if (!updatesRaw || typeof updatesRaw !== "object") {
+        return { error: "No updates provided." };
+      }
+
+      const updates: Partial<Omit<Event, "_id">> = { ...updatesRaw };
+
       // make sure only the updateable fields are there
       const EDITABLE_FIELDS = new Set<keyof Omit<Event, "_id">>([
         "startTime",
@@ -162,14 +241,26 @@ export default class CalanderEventConcept {
       }
 
       // Fetch existing event
-      const existingEvent = await this.events.findOne({ _id: event });
+      const existingEvent = await this.events.findOne({ _id: eventId });
       if (!existingEvent) {
-        return { error: `Event with ID '${event}' not found.` };
+        return { error: `Event with ID '${eventId}' not found.` };
       }
 
       // Basic runtime type checks for Dates on provided fields
       const isValidDate = (d: unknown): d is Date =>
         d instanceof Date && !isNaN(d.getTime());
+      // Coerce string times to Date objects if provided as ISO strings
+      const coerceDateField = (key: "startTime" | "endTime") => {
+        const val = updates[key];
+        if (typeof val === "string") {
+          const d = new Date(val);
+          if (!isNaN(d.getTime())) {
+            updates[key] = d as Date;
+          }
+        }
+      };
+      coerceDateField("startTime");
+      coerceDateField("endTime");
 
       if (updates.startTime !== undefined && !isValidDate(updates.startTime)) {
         return { error: "startTime must be a valid Date object." };
@@ -220,54 +311,19 @@ export default class CalanderEventConcept {
       if (Object.keys($unset).length) updateDoc.$unset = $unset;
 
       // 7) Apply the update
-      const result = await this.events.updateOne({ _id: event }, updateDoc);
+      const result = await this.events.updateOne({ _id: eventId }, updateDoc);
 
       if (result.matchedCount === 0) {
         // Extremely unlikely given the earlier read, but guard anyway.
-        return { error: `Event with ID '${event}' not found (update failed).` };
+        return {
+          error: `Event with ID '${eventId}' not found (update failed).`,
+        };
       }
 
       return {};
     } catch (e) {
       console.error("Error editing event:", e);
       return { error: "Failed to edit event due to a database error." };
-    }
-  }
-
-  /**
-   * creates a new event, exactly the same as the requested event
-   *
-   * @requires the event you want to duplicate exists
-   * @effects duplicated the event exactly as it is, and returns the id
-   *          of the new event
-   *
-   * @param event - The ID of the event to duplicate.
-   *
-   * @returns the ID of the new, duplicated event on success, or an error message.
-   */
-  async duplicateEvent(
-    event: EventID
-  ): Promise<{ duplicateEvent: EventID } | { error: string }> {
-    // Requires: event exists
-    try {
-      const existingEvent = await this.events.findOne({ _id: event });
-
-      if (!existingEvent) {
-        return { error: `Event with ID '${event}' not found.` };
-      }
-
-      // Create a new event document, copying all fields but generating a fresh ID
-      const newEvent: Event = {
-        ...existingEvent,
-        _id: freshID(), // New unique ID for the duplicate
-      };
-
-      await this.events.insertOne(newEvent);
-
-      return { duplicateEvent: newEvent._id };
-    } catch (e) {
-      console.error("Error duplicating event:", e);
-      return { error: "Failed to duplicate event due to a database error." };
     }
   }
 
@@ -283,12 +339,17 @@ export default class CalanderEventConcept {
    *
    * @returns an array of events that occur on the specified day or an error message.
    */
-  async getEventsByDate(
-    day: number,
-    month: number,
-    year: number,
-    teamId: ID
-  ): Promise<{ events: Event[] } | { error: string }> {
+  async getEventsByDate({
+    day,
+    month,
+    year,
+    teamId,
+  }: {
+    day: number;
+    month: number;
+    year: number;
+    teamId: ID;
+  }): Promise<{ events: Event[] } | { error: string }> {
     // Basic parameter validation
     if (
       !Number.isInteger(day) ||
