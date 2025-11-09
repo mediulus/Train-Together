@@ -10,7 +10,7 @@
                     a name String
                     an email String
                     a role Enum{coach, athlete}
-                    weeklyMileage: Number | null //athletes have mileage while coaches do not
+                    weeklyMileage: Number | null 
                     gender: Enum{female, male}
                     google {sub: string, email: string, emailVerified: Boolean, name:string} | null
                     primaryAuth: string
@@ -25,6 +25,7 @@
                 getUser(userId: ID): user: User
                     requires: User exists
                     effects: returns thte user
+
                 setName(userId: ID, name: String)
                     requires: user exists with that userID
                     effects: user.name = name
@@ -41,13 +42,9 @@
                     requires: User exists with that user_id and has role = athlete
                     effects: user.weeklyMileage = weeklyMileage
 
-                getWeeklyMileage(user_id): (weeklyMileage: Number)
+                getAthleteMileage(user_id): (weeklyMileage: Number)
                   requires: User exists and user.role == Athlete
                   effects: returns the users weeklyMileage
-
-                getAthletesByGender(gender: Enum): User[]
-                  requires: there are athletes and athletes with that gender
-                  effects: returns the athletes with that gender
 
                 getUserRole(userId: ID): Enum {'athlete', 'coach'}
                     requires: users exists with that userId

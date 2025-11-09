@@ -8,8 +8,8 @@
                   an id: ID
                   a name String
                   a passKey
-                  a coach User // User.role = coach -> invariant held in the actions
-                  athletes {Users} // User.role = athlete -> invariant held in the actions
+                  a coach User 
+                  athletes {Users}
 
           actions:
                 createTeam(title: String, coach: User, passKey: String): (newTeam: Team)
@@ -18,14 +18,14 @@
                         - this coach does not coach another team
                     effects: generates a new team object with name = title, coach = coach, passKey = passKey
 
-                addAthlete(title: String, athlete: User, passkey: String)
+                addAthlete(title: String, athlete?: User, athleteId?: ID, passkey: String)
                     requires: 
                         - Team exists with this title
                         - passKey = team.passKey
                         - athlete is not already a member of this team
                     effects: adds the athlete to the team.athletes set
 
-                removeAthlete(title: String, athlete: User)
+                removeAthlete(title: String, athlete?: User, athleteId?: ID)
                     requires: 
                         - Team exists with this title
                         - user is in team.athletes
@@ -42,4 +42,10 @@
                 getAthletesByTeam(teamId): Athlete[]
                     requires: the team exists
                     effects: returns a list of the athletes in that team
+
+                deleteTeam(title: string, coachID?: ID, coach?: User)
+                    requires: 
+                        - team with name exists
+                        - requesting coach owns the team
+                    effects: deletes the team document
 

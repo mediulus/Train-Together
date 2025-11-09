@@ -1,6 +1,15 @@
 # 6.104 Assignment 4: Implementing Concepts
 
-[Design Updates](./DesignUpdates.md)
+Train Together is a collaborative platform designed to enhance communication and efficiency between cross-country coaches and athletes. It centralizes training schedules, progress tracking, and performance data in one accessible hub, reducing confusion and manual work. Coaches can easily share updates, monitor athlete well-being, and deliver personalized training plans, while athletes gain clarity and structure in their training. Overall, Train Together strengthens team organization and fosters a more connected, supportive training environment.
+
+## Assignment 4c Deliverables
+- [Design Document](./Documents/Design.md)
+- [Reflection](./Documents/Reflection.md)
+- [User Journey](./Documents/UserJourney.mp4)
+- [UserJourney Logs](./Documents/UserJourneyLogs.md)
+
+## Assignment 4b Deliverables
+- [Design Updates](./DesignUpdates.md)
 
 All of my concepts have been broken down into files that contain 4 items:
 1. The concept implementation
@@ -17,7 +26,7 @@ I have the following concepts:
 4. [Notifications](/src/concepts/Notification)
 5. [Training Records](/src/concepts/TrainingRecords)
 
-## Interesting Moments
+## Interesting Moments from Assignment 4b
 
 I found there to be many interesting moments throughout this lab, finding myself often having to think thoroughly through how the implementation would work on the front end so that my concepts were actually relevant, then later having to also make my concepts more generic as to not get to specific and begin to overlap with eachother. 
 

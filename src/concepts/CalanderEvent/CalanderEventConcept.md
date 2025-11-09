@@ -35,10 +35,6 @@
                     - if updating start or end, start < end
                 effects: updates the event with the given fields and their new values
 
-            duplicateEvent(duplicator: ID, event: ID): (duplicateEvent: Event)
-                requires: event exists
-                effects: creates a new event with the same parameters as the inputted event
-
             getEventsByDate(day: number, month: number, year: number): Event[]
                 requires: all dates are valid
                 effects: returns all of the events that fall on that day

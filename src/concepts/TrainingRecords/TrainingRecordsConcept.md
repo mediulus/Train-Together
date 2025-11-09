@@ -7,6 +7,7 @@
         state:
 
             a set of AthleteData with
+                an id: ID
                 a athleteID: User
                 a day Date
                 a mileage number
@@ -44,3 +45,9 @@
                   - athlete exists
                   - athlete has role = athlete
                 effects: edits or logs an athlete's data from that day with the corresponding log values
+
+              listEntries(userId: ID, from: Date, to: Date, from: Date): AthleteData[]
+                requires: 
+                     - athlete exists
+                     - athlete has data
+                effects: returns all of the athletes data from the start date to the end date
